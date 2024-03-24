@@ -1,0 +1,125 @@
+#!/bin/bash
+# Generates/updates a podcast and deploys it with github.io pages
+
+# Install AND/OR upgrade the dependencies yt-dlp, and ffmpeg
+echo "Loading dependencies..."
+brew install yt-dlp ffmpeg jq git-lfs > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
+mkdir -p data
+git pull origin main
+
+# Prompt the user for the YouTube video URL
+# read -p "Enter the YouTube video URL: " video_url
+# video_url=$(gum input --prompt "Youtube playlist URL: " --placeholder "https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB" --width 200)
+video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
+
+# echo "Downloading podcast audio and captions for past year"
+yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+
+# @todo Convert latest captions to minimalist transcriptions.
+
+files=$(find data -maxdepth 1 -type f -name "*.m4a" | sort -r)
+for file in $files
+do
+	newfile="${file/.m4a/.mp3}"
+	if [ ! -f "$newfile" ]
+	then
+		echo "Converting $file to $newfile with ffmpeg as an mp3 file"
+		# use quiet flags, only output errors
+		ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 96k "$newfile"
+	fi
+	# Ensure the new file is less than 50MB (if possible)
+	if [ $(stat -f%z "$newfile") -gt 50000000 ]
+	then
+		# check that the newfile is not already encoded at 64k
+		if [ $(ffprobe -i "$newfile" -show_streams -select_streams a:0 -show_entries stream=bit_rate -of compact=p=0:nk=1) -eq 64000 ]
+		then
+			echo "The file $newfile is already compressed to 64k, so it will not be compressed further"
+			continue
+		fi
+		echo "The file $newfile is larger than 50MB, so it will be compressed further"
+		rm -f "$newfile"
+		ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 64k "$newfile"
+	fi
+done
+
+# @todo Using the captions, trim out parts of the MP3 that are not part of the lesson/sermon from the ends.
+
+# Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
+echo "Generating RSS feed"
+echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
+echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
+echo '  <channel>' >> podcast.xml
+echo '    <title>Creekside Church of Christ</title>' >> podcast.xml
+echo '    <link>https://creekside.life</link>' >> podcast.xml
+echo '    <language>en-us</language>' >> podcast.xml
+echo '    <itunes:subtitle>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:subtitle>' >> podcast.xml
+echo '    <itunes:author>Creekside Church of Christ</itunes:author>' >> podcast.xml
+echo '    <itunes:summary>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:summary>' >> podcast.xml
+echo '    <description>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</description>' >> podcast.xml
+echo '    <itunes:owner>' >> podcast.xml
+echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xml
+# echo '      <itunes:email></itunes:email>' >> podcast.xml
+echo '    </itunes:owner>' >> podcast.xml
+echo '    <itunes:image href="https://cdn.gutensite.com/web001/site/991/1613866/1613866-custom.png" />' >> podcast.xml
+echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
+echo '      <itunes:category text="Christianity" />' >> podcast.xml
+echo '    </itunes:category>' >> podcast.xml
+echo '    <itunes:explicit>no</itunes:explicit>' >> podcast.xml
+echo '    <itunes:type>episodic</itunes:type>' >> podcast.xml
+echo '    <itunes:complete>yes</itunes:complete>' >> podcast.xml
+echo '    <itunes:new-feed-url>https://creekside.life/podcast.xml</itunes:new-feed-url>' >> podcast.xml
+for file in $(find data -maxdepth 1 -type f -name "*.json" | sort -r)
+do
+	JSON=$(cat "$file")
+	title=$(echo "$JSON" | jq -r '.title' | sed 's/"/\&quot;/g' | sed "s/'/\&apos;/g" | sed 's/&/\&amp;/g' | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')
+	description=$(echo "$JSON" | jq -r '.description' | sed 's/"/\&quot;/g' | sed "s/'/\&apos;/g" | sed 's/&/\&amp;/g' | sed 's/</\&lt;/g' | sed 's/>/\&gt;/g')
+	date=$(echo "$JSON" | jq -r '.upload_date')
+	if [[ -z "$date" || "$date" == "null" ]]
+	then
+		date=$(echo "$JSON" | jq -r '.release_date')
+		if [[ -z "$date" || "$date" == "null" ]]
+		then
+			continue
+		fi
+	fi
+	date=$(date -j -f "%Y%m%d" "$date" "+%a, %d %b %Y %T %z")
+
+	# todo - put clipped audio here
+	audio_file=$(echo "$file" | sed 's/\.info.json$/\.mp3/')
+	if [ ! -f "$audio_file" ]
+	then
+		echo "The audio file $audio_file does not exist yet, so it will not be included in the podcast"
+		continue
+	fi
+	length=$(stat -f%z "$audio_file")
+	duration=$(ffprobe -i "$audio_file" -show_entries format=duration -v quiet -of csv="p=0")
+	echo "    <item>" >> podcast.xml
+	echo "      <title>$title</title>" >> podcast.xml
+	echo "      <description>$description</description>" >> podcast.xml
+	echo "      <pubDate>$date</pubDate>" >> podcast.xml
+	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$audio_file\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
+	echo "      <guid>https://creekside-life.github.io/podcast/$audio_file</guid>" >> podcast.xml
+	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
+	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
+	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
+	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
+	echo "    </item>" >> podcast.xml
+done
+echo '  </channel>' >> podcast.xml
+echo '</rss>' >> podcast.xml
+
+# Deploy the podcast to the website
+# with git remove all history, so that this is the first commit, use the main branch.
+# rm -rf .git
+# git init
+# git lfs install
+# git config --global init.defaultBranch main
+# git branch -M main
+# git remote add origin https://github.com/creekside-life/podcast.git
+# git add build
+# git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+# git push origin main --force
+# git lfs track "*.mp3"
+git add .
+git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+git push origin main
