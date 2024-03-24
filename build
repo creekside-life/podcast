@@ -15,7 +15,34 @@ video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay
 # echo "Downloading podcast audio and captions for past year"
 yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
-# @todo Convert latest captions to minimalist transcriptions.
+echo "Generating minimalist transcriptions"
+for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
+do
+	newfile="${file/.vtt/.txt}"
+	if [ -f "$newfile" ]
+	then
+		continue
+	fi
+	text=$(cat "$file")
+
+	# Remove lines like:
+	# WEBVTT
+	# Kind: captions
+	# Language: en
+	text=$(echo "$text" | gsed '/^WEBVTT$/d' | gsed '/^Kind: captions$/d' | gsed '/^Language: en$/d')
+	# Remove timestamps like: 00:00:00.000 --> 00:00:02.000 and the rest of that line
+    text=$(echo "$text" | gsed 's/[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\.[0-9]\{3\} --> [0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\.[0-9]\{3\}.*//g')
+    # Remove <> tags and </> tags
+    text=$(echo "$text" | gsed 's/<[^>]*>//g')
+    text=$(echo "$text" | gsed 's/<\/[^>]*>//g')
+    # Remove text in [] brackets like [Music]
+    text=$(echo "$text" | gsed 's/\[.*\]//g')
+	# Remove empty lines
+	text=$(echo "$text" | gsed '/^\s*$/d')
+	# Remove duplicate contiguous lines, but allow duplicate lines that are not contiguous
+    text=$(echo "$text" | uniq)
+    echo "$text" > "$newfile"
+done
 
 files=$(find data -maxdepth 1 -type f -name "*.m4a" | sort -r)
 for file in $files
@@ -121,7 +148,7 @@ echo '</rss>' >> podcast.xml
 # git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 # git push origin main --force
 
-# For subsequent pushes, push one mp3 at a time to avoid disconnects.
+# Push one mp3 at a time to avoid disconnects.
 for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
 do
 	git add "$file"
