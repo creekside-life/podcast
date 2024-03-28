@@ -52,21 +52,22 @@ do
 	then
 		echo "Converting $file to $newfile with ffmpeg as an mp3 file"
 		# use quiet flags, only output errors
-		ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 96k "$newfile"
+		# Normalize volume, remove silence longer than 2 seconds, and increase the speed by 12%
+		ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 96k -af "silenceremove=1:0:-50dB,atrim=0.1,asetrate=44100*1.12" "$newfile"
 	fi
-	# Ensure the new file is less than 50MB (if possible)
-	if [ $(stat -f%z "$newfile") -gt 50000000 ]
-	then
-		# check that the newfile is not already encoded at 64k
-		if [ $(ffprobe -i "$newfile" -show_streams -select_streams a:0 -show_entries stream=bit_rate -of compact=p=0:nk=1) -eq 64000 ]
-		then
-			echo "The file $newfile is already compressed to 64k, so it will not be compressed further"
-			continue
-		fi
-		echo "The file $newfile is larger than 50MB, so it will be compressed further"
-		rm -f "$newfile"
-		ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 64k "$newfile"
-	fi
+	# # Ensure the new file is less than 50MB (if possible)
+	# if [ $(stat -f%z "$newfile") -gt 50000000 ]
+	# then
+	# 	# check that the newfile is not already encoded at 64k
+	# 	if [ $(ffprobe -i "$newfile" -show_streams -select_streams a:0 -show_entries stream=bit_rate -of compact=p=0:nk=1) -eq 64000 ]
+	# 	then
+	# 		echo "The file $newfile is already compressed to 64k, so it will not be compressed further"
+	# 		continue
+	# 	fi
+	# 	echo "The file $newfile is larger than 50MB, so it will be compressed further"
+	# 	rm -f "$newfile"
+	# 	ffmpeg -i "$file" -acodec libmp3lame -rematrix_maxval 1.0 -ac 1 -b:a 64k "$newfile"
+	# fi
 done
 
 # @todo Using the captions, trim out parts of the MP3 that are not part of the lesson/sermon from the ends.
@@ -120,6 +121,16 @@ do
 	fi
 	length=$(stat -f%z "$audio_file")
 	duration=$(ffprobe -i "$audio_file" -show_entries format=duration -v quiet -of csv="p=0")
+	# Remove the follwing lines from the description:
+	# 813-685-0750
+	# 2908 Bell Shoals Rd
+	# Brandon, FL 33511
+	# http://creekside.life
+	# Creekside Church of Christ
+	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
+	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
+	# Remove "-" and everything after it from the title, and trim whitespace
+	title=$(echo "$title" | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title</title>" >> podcast.xml
 	echo "      <description>$description</description>" >> podcast.xml
