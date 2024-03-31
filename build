@@ -1,0 +1,149 @@
+#!/bin/bash
+# Generates/updates a podcast and deploys it with github.io pages
+
+# Install AND/OR upgrade the dependencies yt-dlp, and ffmpeg
+echo "Loading dependencies..."
+brew install yt-dlp ffmpeg jq > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
+mkdir -p data
+#git pull origin main
+
+# Prompt the user for the YouTube video URL
+# read -p "Enter the YouTube video URL: " video_url
+# video_url=$(gum input --prompt "Youtube playlist URL: " --placeholder "https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB" --width 200)
+video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
+
+# echo "Downloading podcast audio and captions for past year"
+yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+
+echo "Generating minimalist transcriptions"
+for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
+do
+	newfile="${file/.vtt/.txt}"
+	if [ -f "$newfile" ]
+	then
+		continue
+	fi
+	text=$(cat "$file")
+
+	# Remove lines like:
+	# WEBVTT
+	# Kind: captions
+	# Language: en
+	text=$(echo "$text" | gsed '/^WEBVTT$/d' | gsed '/^Kind: captions$/d' | gsed '/^Language: en$/d')
+  # Remove timestamps like: 00:00:00.000 --> 00:00:02.000 and the rest of that line
+  text=$(echo "$text" | gsed 's/[0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\.[0-9]\{3\} --> [0-9]\{2\}:[0-9]\{2\}:[0-9]\{2\}\.[0-9]\{3\}.*//g')
+  # Remove <> tags and </> tags
+  text=$(echo "$text" | gsed 's/<[^>]*>//g')
+  text=$(echo "$text" | gsed 's/<\/[^>]*>//g')
+  # Remove text in [] brackets like [Music]
+  text=$(echo "$text" | gsed 's/\[.*\]//g')
+  # Remove empty lines
+  text=$(echo "$text" | gsed '/^\s*$/d')
+  # Remove duplicate contiguous lines, but allow duplicate lines that are not contiguous
+  text=$(echo "$text" | uniq)
+  echo "$text" > "$newfile"
+done
+
+# Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
+echo "Generating RSS feed"
+echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
+echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
+echo '  <channel>' >> podcast.xml
+echo '    <title>Creekside Church of Christ</title>' >> podcast.xml
+echo '    <link>https://creekside.life</link>' >> podcast.xml
+echo '    <language>en-us</language>' >> podcast.xml
+echo '    <itunes:subtitle>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:subtitle>' >> podcast.xml
+echo '    <itunes:author>Creekside Church of Christ</itunes:author>' >> podcast.xml
+echo '    <itunes:summary>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:summary>' >> podcast.xml
+echo '    <description>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</description>' >> podcast.xml
+echo '    <itunes:owner>' >> podcast.xml
+echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xml
+# echo '      <itunes:email></itunes:email>' >> podcast.xml
+echo '    </itunes:owner>' >> podcast.xml
+echo '    <itunes:image href="https://cdn.gutensite.com/web001/site/991/1613866/1613866-custom.png" />' >> podcast.xml
+echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
+echo '      <itunes:category text="Christianity" />' >> podcast.xml
+echo '    </itunes:category>' >> podcast.xml
+echo '    <itunes:explicit>no</itunes:explicit>' >> podcast.xml
+echo '    <itunes:type>episodic</itunes:type>' >> podcast.xml
+echo '    <itunes:complete>yes</itunes:complete>' >> podcast.xml
+echo '    <itunes:new-feed-url>https://creekside.life/podcast.xml</itunes:new-feed-url>' >> podcast.xml
+for file in $(find data -maxdepth 1 -type f -name "*.json" | sort -r)
+do
+	JSON=$(cat "$file")
+	title=$(echo "$JSON" | jq -r '.title' | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
+	title_xml=$(echo "$JSON" | jq -r '.title' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	transcript=$(echo "$file" | gsed 's/\.info\.json/\.txt/')
+	date=$(echo "$JSON" | jq -r '.upload_date')
+	if [[ -z "$date" || "$date" == "null" ]]
+	then
+		date=$(echo "$JSON" | jq -r '.release_date')
+		if [[ -z "$date" || "$date" == "null" ]]
+		then
+			continue
+		fi
+	fi
+	date=$(date -j -f "%Y%m%d" "$date" "+%a, %d %b %Y %T %z")
+  m4a_file=$(echo "$file" | gsed 's/\.info\.json$/\.m4a/')
+	mp3_file=$(echo "$file" | gsed 's/\.info\.json$/\.mp3/')
+  bash auphonic.sh "$m4a_file" "$title" "$mp3_file"
+  mp3_fast=$(echo "$mp3_file" | sed 's/\.[^.]*$/_sp.mp3/')
+  bash speed_up.sh "$mp3_file" "$mp3_fast"
+	if [ ! -f "$mp3_fast" ]
+	then
+		echo "The audio file $mp3_fast does not exist."
+		exit 1;
+		continue
+	fi
+	length=$(stat -f%z "$mp3_fast")
+	duration=$(ffprobe -i "$mp3_fast" -show_entries format=duration -v quiet -of csv="p=0")
+	# Remove the following lines from the description:
+	# 813-685-0750
+	# 2908 Bell Shoals Rd
+	# Brandon, FL 33511
+	# http://creekside.life
+	# Creekside Church of Christ
+	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
+	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
+	# Remove "-" and everything after it from the title, and trim whitespace
+	echo "    <item>" >> podcast.xml
+	echo "      <title>$title_xml</title>" >> podcast.xml
+	echo "      <description>$description</description>" >> podcast.xml
+	echo "      <pubDate>$date</pubDate>" >> podcast.xml
+	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$mp3_fast\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
+	echo "      <guid>https://creekside-life.github.io/podcast/$mp3_fast</guid>" >> podcast.xml
+	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
+	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
+	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
+	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
+  echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
+	echo "    </item>" >> podcast.xml
+done
+echo '  </channel>' >> podcast.xml
+echo '</rss>' >> podcast.xml
+
+# Deploy the podcast to the website
+exit
+
+# For a large initial push:
+# with git remove all history, so that this is the first commit, use the main branch.
+rm -rf .git
+git init
+git config --global init.defaultBranch main
+git branch -M main
+git remote add origin https://github.com/creekside-life/podcast.git
+git add build podcast.xml auphonic.sh speed_up.sh
+git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+git push origin main --force
+
+# Push one mp3 at a time to avoid disconnects.
+for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
+do
+	git add "$file"
+	git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+	git push origin main
+done
+git add .
+git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+git push origin main
