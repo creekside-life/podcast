@@ -124,18 +124,17 @@ echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
 
 # Deploy the podcast to the website
-exit
 
 # For a large initial push:
 # with git remove all history, so that this is the first commit, use the main branch.
-rm -rf .git
-git init
-git config --global init.defaultBranch main
-git branch -M main
-git remote add origin https://github.com/creekside-life/podcast.git
-git add build podcast.xml auphonic.sh speed_up.sh
-git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
-git push origin main --force
+#rm -rf .git
+#git init
+#git config --global init.defaultBranch main
+#git branch -M main
+#git remote add origin https://github.com/creekside-life/podcast.git
+#git add build podcast.xml auphonic.sh speed_up.sh
+#git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+#git push origin main --force
 
 # Push one mp3 at a time to avoid disconnects.
 for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
