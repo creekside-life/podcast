@@ -17,7 +17,7 @@ video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay
 # yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
 # For subsequent updates:
-yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+#yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
 echo "Generating minimalist transcriptions"
 for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
@@ -103,16 +103,16 @@ do
   m4a_file=$(echo "$file" | gsed 's/\.info\.json$/\.m4a/')
 	mp3_file=$(echo "$file" | gsed 's/\.info\.json$/\.mp3/')
   bash auphonic.sh "$m4a_file" "$title" "$mp3_file"
-  mp3_fast=$(echo "$mp3_file" | sed 's/\.[^.]*$/_sp.mp3/')
-  bash speed_up.sh "$mp3_file" "$mp3_fast"
-	if [ ! -f "$mp3_fast" ]
-	then
-		echo "The audio file $mp3_fast does not exist."
-		exit 1;
-		continue
-	fi
-	length=$(stat -f%z "$mp3_fast")
-	duration=$(ffprobe -i "$mp3_fast" -show_entries format=duration -v quiet -of csv="p=0")
+  # mp3_fast=$(echo "$mp3_file" | sed 's/\.[^.]*$/_sp.mp3/')
+  # bash speed_up.sh "$mp3_file" "$mp3_fast"
+  # if [ ! -f "$mp3_fast" ]
+  # then
+  # 	echo "The audio file $mp3_fast does not exist."
+  #	 exit 1;
+  #	 continue
+  # fi
+	length=$(stat -f%z "$mp3_file")
+	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0")
 	# Remove the following lines from the description:
 	# 813-685-0750
 	# 2908 Bell Shoals Rd
@@ -122,8 +122,8 @@ do
 	# Creekside Church of Christ
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
 	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
-  au_id=$(echo "$file" | gsed 's/\.info\.json/\.au/')
-	# Remove "-" and everything after it from the title, and trim whitespace
+  au_id_file=$(echo "$file" | gsed 's/\.info\.json/\.au/')
+  au_id=$(cat "$au_id_file")
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
 	echo "      <description>$description</description>" >> podcast.xml
@@ -138,9 +138,9 @@ do
 	echo "    </item>" >> podcast.xml
 
 	# Add to the readme as a table:
-	echo " - [$title](https://creekside-life.github.io/podcast/$mp3_fast) $md_date [txt](https://creekside-life.github.io/podcast/$transcript)" >> README.md
+	echo " - [$title](https://creekside-life.github.io/podcast/$mp3_file) $md_date [txt](https://creekside-life.github.io/podcast/$transcript)" >> README.md
 
-	echo "<li><a href=\"$mp3_fast\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
+	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
