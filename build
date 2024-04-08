@@ -50,10 +50,13 @@ done
 
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
 echo "Generating RSS feed and README.md..."
+
+echo '<html><head><title>Creekside Church of Christ podcast</title></head><body>' > index.html
+echo '<h1>Creekside Church of Christ podcast</h1>' >> index.html
+echo '<ul>' >> index.html
+
 echo '# Creekside Church of Christ podcast' > README.md
 echo '' >> README.md
-echo '| Title | Description | Transcript | Date |' >> README.md
-echo '|-------|-------------|------------|------|' >> README.md
 
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
 echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
@@ -67,7 +70,8 @@ echo '    <itunes:summary>Weekly sermons and other content from Creekside Church
 echo '    <description>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</description>' >> podcast.xml
 echo '    <itunes:owner>' >> podcast.xml
 echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xml
-echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
+#echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
+echo '      <itunes:email>heathdutton@gmail.com</itunes:email>' >> podcast.xml
 echo '    </itunes:owner>' >> podcast.xml
 echo '    <itunes:image href="https://cdn.gutensite.com/web001/site/991/1613866/1613866-custom.png" />' >> podcast.xml
 echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
@@ -118,13 +122,14 @@ do
 	# Creekside Church of Christ
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
 	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
+  au_id=$(echo "$file" | gsed 's/\.info\.json/\.au/')
 	# Remove "-" and everything after it from the title, and trim whitespace
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
 	echo "      <description>$description</description>" >> podcast.xml
 	echo "      <pubDate>$date</pubDate>" >> podcast.xml
-	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$mp3_fast\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
-	echo "      <guid>https://creekside-life.github.io/podcast/$mp3_fast</guid>" >> podcast.xml
+	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$mp3_file\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
+	echo "      <guid>$au_id</guid>" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
 	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
 	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
@@ -133,13 +138,18 @@ do
 	echo "    </item>" >> podcast.xml
 
 	# Add to the readme as a table:
-	echo "| [$title](https://creekside-life.github.io/podcast/$mp3_fast) | $description | [Transcript](https://creekside-life.github.io/podcast/$transcript) | $md_date |" >> README.md
+	echo " - [$title](https://creekside-life.github.io/podcast/$mp3_fast) $md_date [txt](https://creekside-life.github.io/podcast/$transcript)" >> README.md
+
+	echo "<li><a href=\"$mp3_fast\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
-echo '|-------|-------------|------------|------|' >> README.md
+
 echo '' >> README.md
 echo '[RSS feed](./podcast.xml)' >> README.md
+
+echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
+
 
 # Deploy the podcast to the website
 
