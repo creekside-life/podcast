@@ -52,12 +52,9 @@ done
 echo "Generating RSS feed and README.md..."
 echo '# Creekside Church of Christ podcast' > README.md
 echo '' >> README.md
-echo '[RSS feed](./podcast.xml)' >> README.md
-echo '' >> README.md
 echo '| Title | Description | Transcript | Date |' >> README.md
 echo '|-------|-------------|------------|------|' >> README.md
 
-echo '' >> README.md
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
 echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
 echo '  <channel>' >> podcast.xml
@@ -86,7 +83,7 @@ do
 	title=$(echo "$JSON" | jq -r '.title' | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
 	title_xml=$(echo "$JSON" | jq -r '.title' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
-	transcript=$(echo "$file" | gsed 's/\.info\.json/\.txt/')
+	transcript=$(echo "$file" | gsed 's/\.info\.json/\.en\.txt/')
 	date=$(echo "$JSON" | jq -r '.upload_date')
 	if [[ -z "$date" || "$date" == "null" ]]
 	then
@@ -96,7 +93,9 @@ do
 			continue
 		fi
 	fi
+	md_date=$(date -j -f "%Y%m%d" "$date" "+%Y-%m-%d")
 	date=$(date -j -f "%Y%m%d" "$date" "+%a, %d %b %Y %T %z")
+
   m4a_file=$(echo "$file" | gsed 's/\.info\.json$/\.m4a/')
 	mp3_file=$(echo "$file" | gsed 's/\.info\.json$/\.mp3/')
   bash auphonic.sh "$m4a_file" "$title" "$mp3_file"
@@ -115,9 +114,10 @@ do
 	# 2908 Bell Shoals Rd
 	# Brandon, FL 33511
 	# http://creekside.life
+	# https://creekside.life
 	# Creekside Church of Christ
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
-	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
+	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
 	# Remove "-" and everything after it from the title, and trim whitespace
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
@@ -133,11 +133,13 @@ do
 	echo "    </item>" >> podcast.xml
 
 	# Add to the readme as a table:
-	echo "| [$title](https://creekside-life.github.io/podcast/$mp3_fast) | $description | [Transcript](https://creekside-life.github.io/podcast/$transcript) | $date |" >> README.md
-
+	echo "| [$title](https://creekside-life.github.io/podcast/$mp3_fast) | $description | [Transcript](https://creekside-life.github.io/podcast/$transcript) | $md_date |" >> README.md
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
+echo '|-------|-------------|------------|------|' >> README.md
+echo '' >> README.md
+echo '[RSS feed](./podcast.xml)' >> README.md
 
 # Deploy the podcast to the website
 
