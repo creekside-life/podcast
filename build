@@ -12,8 +12,12 @@ mkdir -p data
 # video_url=$(gum input --prompt "Youtube playlist URL: " --placeholder "https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB" --width 200)
 video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
 
+# For a large initial backfill:
 # echo "Downloading podcast audio and captions for past year"
-yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+# yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+
+# For subsequent updates:
+yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
 echo "Generating minimalist transcriptions"
 for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
@@ -45,7 +49,15 @@ do
 done
 
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
-echo "Generating RSS feed"
+echo "Generating RSS feed and README.md..."
+echo '# Creekside Church of Christ podcast' > README.md
+echo '' >> README.md
+echo '[RSS feed](./podcast.xml)' >> README.md
+echo '' >> README.md
+echo '| Title | Description | Transcript | Date |' >> README.md
+echo '|-------|-------------|------------|------|' >> README.md
+
+echo '' >> README.md
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
 echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
 echo '  <channel>' >> podcast.xml
@@ -58,7 +70,7 @@ echo '    <itunes:summary>Weekly sermons and other content from Creekside Church
 echo '    <description>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</description>' >> podcast.xml
 echo '    <itunes:owner>' >> podcast.xml
 echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xml
-# echo '      <itunes:email></itunes:email>' >> podcast.xml
+echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
 echo '    </itunes:owner>' >> podcast.xml
 echo '    <itunes:image href="https://cdn.gutensite.com/web001/site/991/1613866/1613866-custom.png" />' >> podcast.xml
 echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
@@ -119,6 +131,10 @@ do
 	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
 	echo "    </item>" >> podcast.xml
+
+	# Add to the readme as a table:
+	echo "| [$title](https://creekside-life.github.io/podcast/$mp3_fast) | $description | [Transcript](https://creekside-life.github.io/podcast/$transcript) | $date |" >> README.md
+
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
@@ -135,14 +151,15 @@ echo '</rss>' >> podcast.xml
 #git add build podcast.xml auphonic.sh speed_up.sh
 #git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 #git push origin main --force
-
 # Push one mp3 at a time to avoid disconnects.
-for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
-do
-	git add "$file"
-	git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
-	git push origin main
-done
+#for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
+#do
+#	git add "$file"
+#	git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
+#	git push origin main
+#done
+
+# For subsequent pushes:
 git add .
 git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 git push origin main
