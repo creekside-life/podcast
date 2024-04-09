@@ -82,7 +82,7 @@ for file in $(find data -maxdepth 1 -type f -name "*.json" | sort -r)
 do
 	JSON=$(cat "$file")
 	title=$(echo "$JSON" | jq -r '.title' | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
-	title_xml=$(echo "$JSON" | jq -r '.title' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	title_xml=$(echo "$title" | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	transcript=$(echo "$file" | gsed 's/\.info\.json/\.en\.txt/')
 	date=$(echo "$JSON" | jq -r '.upload_date')
