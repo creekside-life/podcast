@@ -70,7 +70,7 @@ echo '      <itunes:name>Church of Christ in Valrico FL</itunes:name>' >> podcas
 #echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
 echo '      <itunes:email>heathdutton@gmail.com</itunes:email>' >> podcast.xml
 echo '    </itunes:owner>' >> podcast.xml
-echo '    <itunes:image href="https://creekside-life.github.io/podcast/cover-square.png" />' >> podcast.xml
+echo '    <itunes:image href="https://creekside-life.github.io/podcast/cover-square-lg.png" />' >> podcast.xml
 echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
 echo '      <itunes:category text="Christianity" />' >> podcast.xml
 echo '    </itunes:category>' >> podcast.xml
