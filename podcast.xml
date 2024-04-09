@@ -12,7 +12,7 @@
       <itunes:name>Creekside Church of Christ</itunes:name>
       <itunes:email>heathdutton@gmail.com</itunes:email>
     </itunes:owner>
-    <itunes:image href="https://creekside-life.github.io/podcast/cover-square.png" />
+    <itunes:image href="https://creekside-life.github.io/podcast/cover-square.png?rev=2" />
     <itunes:category text="Religion &amp; Spirituality">
       <itunes:category text="Christianity" />
     </itunes:category>
