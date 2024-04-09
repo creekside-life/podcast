@@ -17,7 +17,7 @@ video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay
 # yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
 # For subsequent updates:
-#yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
 
 echo "Generating minimalist transcriptions"
 for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
@@ -55,9 +55,6 @@ echo '<html><head><title>Creekside Church of Christ podcast</title></head><body>
 echo '<h1>Creekside Church of Christ podcast</h1>' >> index.html
 echo '<ul>' >> index.html
 
-echo '# Creekside Church of Christ podcast' > README.md
-echo '' >> README.md
-
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
 echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
 echo '  <channel>' >> podcast.xml
@@ -73,14 +70,14 @@ echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xm
 #echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
 echo '      <itunes:email>heathdutton@gmail.com</itunes:email>' >> podcast.xml
 echo '    </itunes:owner>' >> podcast.xml
-echo '    <itunes:image href="https://cdn.gutensite.com/web001/site/991/1613866/1613866-custom.png" />' >> podcast.xml
+echo '    <itunes:image href="https://creekside-life.github.io/podcast/cover-square.png" />' >> podcast.xml
 echo '    <itunes:category text="Religion &amp; Spirituality">' >> podcast.xml
 echo '      <itunes:category text="Christianity" />' >> podcast.xml
 echo '    </itunes:category>' >> podcast.xml
 echo '    <itunes:explicit>no</itunes:explicit>' >> podcast.xml
 echo '    <itunes:type>episodic</itunes:type>' >> podcast.xml
-echo '    <itunes:complete>yes</itunes:complete>' >> podcast.xml
-echo '    <itunes:new-feed-url>https://creekside.life/podcast.xml</itunes:new-feed-url>' >> podcast.xml
+echo '    <itunes:complete>no</itunes:complete>' >> podcast.xml
+echo '    <itunes:new-feed-url>https://creekside-life.github.io/podcast/podcast.xml</itunes:new-feed-url>' >> podcast.xml
 for file in $(find data -maxdepth 1 -type f -name "*.json" | sort -r)
 do
 	JSON=$(cat "$file")
@@ -137,16 +134,10 @@ do
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
 	echo "    </item>" >> podcast.xml
 
-	# Add to the readme as a table:
-	echo " - [$title](https://creekside-life.github.io/podcast/$mp3_file) $md_date [txt](https://creekside-life.github.io/podcast/$transcript)" >> README.md
-
 	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
-
-echo '' >> README.md
-echo '[RSS feed](./podcast.xml)' >> README.md
 
 echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
 
