@@ -58,15 +58,15 @@ echo '<ul>' >> index.html
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
 echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
 echo '  <channel>' >> podcast.xml
-echo '    <title>Creekside Church of Christ</title>' >> podcast.xml
+echo '    <title>Creekside</title>' >> podcast.xml
 echo '    <link>https://creekside.life</link>' >> podcast.xml
 echo '    <language>en-us</language>' >> podcast.xml
 echo '    <itunes:subtitle>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:subtitle>' >> podcast.xml
-echo '    <itunes:author>Creekside Church of Christ</itunes:author>' >> podcast.xml
+echo '    <itunes:author>Church of Christ in Valrico FL</itunes:author>' >> podcast.xml
 echo '    <itunes:summary>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</itunes:summary>' >> podcast.xml
 echo '    <description>Weekly sermons and other content from Creekside Church of Christ in Valrico, Florida</description>' >> podcast.xml
 echo '    <itunes:owner>' >> podcast.xml
-echo '      <itunes:name>Creekside Church of Christ</itunes:name>' >> podcast.xml
+echo '      <itunes:name>Church of Christ in Valrico FL</itunes:name>' >> podcast.xml
 #echo '      <itunes:email>office@creekside.life</itunes:email>' >> podcast.xml
 echo '      <itunes:email>heathdutton@gmail.com</itunes:email>' >> podcast.xml
 echo '    </itunes:owner>' >> podcast.xml
