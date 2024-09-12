@@ -163,6 +163,7 @@ echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
 #done
 
 # For subsequent pushes:
+git config http.postBuffer 524288000
 git add .
 git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 git push origin main
