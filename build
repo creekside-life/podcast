@@ -1,26 +1,68 @@
 #!/bin/bash
 # Generates/updates a podcast and deploys it with github.io pages
-
-# Install AND/OR upgrade the dependencies yt-dlp, and ffmpeg
+# To clean out and start over: find ./data/ -type f ! -name '*.au' ! -name '*.mp3' -delete
+# Install AND/OR upgrade the dependencies
 echo "Loading dependencies..."
-brew install yt-dlp ffmpeg jq > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
+brew install yt-dlp ffmpeg gsed jq > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
 mkdir -p data
-#git pull origin main
+mkdir -p data/shorts
 
 # Prompt the user for the YouTube video URL
-# read -p "Enter the YouTube video URL: " video_url
-# video_url=$(gum input --prompt "Youtube playlist URL: " --placeholder "https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB" --width 200)
-video_url="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
+# read -p "Enter the YouTube playlist URL: " playlist
+playlist="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
 
-# For a large initial backfill:
-# echo "Downloading podcast audio and captions for past year"
-# yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-12months --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+# Download the audio, subtitles and metadata, keep an archive to track downloaded files.
+# Stop when a file already exists, assuming we are caught up.
+yt-dlp --format 140 \
+  --output 'data/%(upload_date>%Y-%m-%d)s-%(id)s.%(ext)s' \
+  --download-archive ./data/archive.txt --break-on-existing \
+  --ignore-errors --write-info-json \
+  --write-auto-subs --sub-langs en --sub-format vtt \
+  "$playlist"
 
-# For subsequent updates:
-yt-dlp --format 140 --output 'data/%(upload_date>%Y-%m-%d,release_date>%Y-%m-%d)s-%(id)s.%(ext)s' --dateafter now-2weeks --ignore-errors --write-info-json --write-auto-subs --sub-langs en --sub-format vtt "$video_url"
+function remove-duplicates-by-extension {
+  EXTENSION="$1"
+  echo "Checking for duplicate $EXTENSION files..."
+  for file in $(find ./data -maxdepth 1 -type f -name "*.$EXTENSION" | sort)
+  do
+    # escape . in the extension
+    REGEX=$(echo "$EXTENSION" | gsed 's/\./\\\\./g')
+    video_id=$(echo "$file" | gsed "s/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.$REGEX/\1/")
+    if [ "$video_id" == "$file" ]
+    then
+      continue
+    fi
+    file_date=$(echo "$file" | gsed 's/.*\/\([0-9]\{4\}\)-\([0-9]\{2\}\)-\([0-9]\{2\}\)-.*/\1\2\3/')
+    # echo "Checking for duplicates of $video_id..."
+    for newfile in $(find ./data -maxdepth 1 -type f -name "*-$video_id.$EXTENSION" | grep -v "$file" | sort -r)
+    do
+      # Make sure it's not the current file
+      if [ "$file" == "$newfile" ]
+      then
+        continue
+      fi
+      # We want to keep the oldest file, so only look for files newer than the current file.
+      newfile_date=$(echo "$newfile" | gsed 's/.*\/\([0-9]\{4\}\)-\([0-9]\{2\}\)-\([0-9]\{2\}\)-.*/\1\2\3/')
+      if [ "$newfile_date" -lt "$file_date" ]
+      then
+        continue
+      fi
+      echo "Removing $newfile as a duplicate of $file."
+      rm -f $newfile
+    done
+  done
+}
+
+# Perhaps not always needed, but needed in my case to cleanup previous downloads where I inadvertently caused duplicates.
+remove-duplicates-by-extension "au"
+remove-duplicates-by-extension "mp3"
+remove-duplicates-by-extension "m4a"
+remove-duplicates-by-extension "en.vtt"
+remove-duplicates-by-extension "en.txt"
+remove-duplicates-by-extension "info.json"
 
 echo "Generating minimalist transcriptions"
-for file in $(find data -maxdepth 1 -type f -name "*.vtt" | sort -r)
+for file in $(find ./data -maxdepth 1 -type f -name "*.vtt" | sort -r)
 do
 	newfile="${file/.vtt/.txt}"
 	if [ -f "$newfile" ]
@@ -78,12 +120,13 @@ echo '    <itunes:explicit>no</itunes:explicit>' >> podcast.xml
 echo '    <itunes:type>episodic</itunes:type>' >> podcast.xml
 echo '    <itunes:complete>no</itunes:complete>' >> podcast.xml
 echo '    <itunes:new-feed-url>https://creekside-life.github.io/podcast/podcast.xml</itunes:new-feed-url>' >> podcast.xml
-for file in $(find data -maxdepth 1 -type f -name "*.json" | sort -r)
+for file in $(find ./data -maxdepth 1 -type f -name "*.info.json" | sort -r)
 do
 	JSON=$(cat "$file")
 	title=$(echo "$JSON" | jq -r '.title' | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
 	title_xml=$(echo "$title" | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	thumbnail=$(echo "$JSON" | jq -r '.thumbnail')
 	transcript=$(echo "$file" | gsed 's/\.info\.json/\.en\.txt/')
 	date=$(echo "$JSON" | jq -r '.upload_date')
 	if [[ -z "$date" || "$date" == "null" ]]
@@ -110,6 +153,12 @@ do
   # fi
 	length=$(stat -f%z "$mp3_file")
 	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0")
+	# If duration is more than 45min throw an error here for debugging.
+	if [ $(echo "$duration > 2700" | bc) -eq 1 ]
+	then
+	  echo "The audio file $mp3_file is longer than 45 minutes. The youtube video at url: https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id') may be too long."
+    exit 1;
+  fi
 	# Remove the following lines from the description:
 	# 813-685-0750
 	# 2908 Bell Shoals Rd
@@ -118,7 +167,7 @@ do
 	# https://creekside.life
 	# Creekside Church of Christ
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
-	description=$(echo "$description" | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
+	description=$(echo "$description" | gsed '/Originally aired:/d' | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
   au_id_file=$(echo "$file" | gsed 's/\.info\.json/\.au/')
   au_id=$(cat "$au_id_file")
 	echo "    <item>" >> podcast.xml
@@ -127,13 +176,13 @@ do
 	echo "      <pubDate>$date</pubDate>" >> podcast.xml
 	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$mp3_file\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
 	echo "      <guid>$au_id</guid>" >> podcast.xml
+	echo "      <itunes:image href=\"$thumbnail\" />" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
 	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
 	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
 	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
 	echo "    </item>" >> podcast.xml
-
 	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
