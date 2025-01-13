@@ -20,6 +20,29 @@ yt-dlp --format 140 \
   --write-auto-subs --sub-langs en --sub-format vtt \
   "$playlist"
 
+echo "Checking for m4a files that have not been trimmed"
+for file in $(find ./data -maxdepth 1 -type f -name "*.m4a" | sort -r)
+do
+  duration=$(ffprobe -i "$file" -show_entries format=duration -v quiet -of csv="p=0")
+  # If duration is more than 45min throw an error here for debugging.
+  if [ $(echo "$duration > 2700" | bc) -eq 1 ]
+  then
+    video_id=$(echo "$file" | gsed 's/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
+    echo "The audio file $file is longer than 45 minutes. The youtube video at url: https://www.youtube.com/watch?v=$video_id may be too long."
+    # Delete the m4a, mp3, info.json, en.vtt, en.txt and .au files for this video.
+    rm -f "$file"
+    rm -f $(echo "$file" | gsed 's/\.m4a/\.mp3/')
+    rm -f $(echo "$file" | gsed 's/\.m4a/\.info.json/')
+    rm -f $(echo "$file" | gsed 's/\.m4a/\.en.vtt/')
+    rm -f $(echo "$file" | gsed 's/\.m4a/\.en.txt/')
+    rm -f $(echo "$file" | gsed 's/\.m4a/\.au/')
+    # Remove the entry from ./data/archive.txt so that it will be re-downloaded
+    gsed -i "/$video_id/d" ./data/archive.txt
+    exit 1;
+  fi
+done
+
+
 function remove-duplicates-by-extension {
   EXTENSION="$1"
   echo "Checking for duplicate $EXTENSION files..."
@@ -178,7 +201,7 @@ do
 	echo "      <guid>$au_id</guid>" >> podcast.xml
 	echo "      <itunes:image href=\"$thumbnail\" />" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
-	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
+#	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
 	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
 	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
