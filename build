@@ -148,9 +148,8 @@ echo '    <itunes:explicit>no</itunes:explicit>' >> podcast.xml
 echo '    <itunes:type>episodic</itunes:type>' >> podcast.xml
 echo '    <itunes:complete>no</itunes:complete>' >> podcast.xml
 echo '    <itunes:new-feed-url>https://creekside-life.github.io/podcast/podcast.xml</itunes:new-feed-url>' >> podcast.xml
-for file in $(find ./data -maxdepth 1 -type f -name "*.info.json" | sort -r)
+for file in $(find ./data -maxdepth 1 -type f -name "*.info.json" | sort -r | gsed 's/\.\///')
 do
-  file=$(echo "$file" | gsed 's/\/\.\//\//')
 	JSON=$(cat "$file")
 	# gsed 's/\s+-\s+.*//' |
 	title=$(echo "$JSON" | jq -r '.title' | gsed 's/^\s*//' | gsed 's/\s*$//')
