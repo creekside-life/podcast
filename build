@@ -198,6 +198,7 @@ do
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
 	description=$(echo "$description" | gsed '/Originally aired:/d' | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
   au_id_file=$(echo "$file" | gsed 's/\.info\.json/\.au/')
+  video_url="https://www.youtube.com/watch?v$(echo "$JSON" | jq -r '.id')"
   au_id=$(cat "$au_id_file")
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
@@ -207,12 +208,12 @@ do
 	echo "      <guid>$au_id</guid>" >> podcast.xml
 	echo "      <itunes:image href=\"$thumbnail\" />" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
-#	echo "      <itunes:subtitle>$description</itunes:subtitle>" >> podcast.xml
 	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
 	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
+  echo "      <link>$video_url</link>" >> podcast.xml
 	echo "    </item>" >> podcast.xml
-	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a></li>" >> index.html
+	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a> <a href=\"$video_url\">vid</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
