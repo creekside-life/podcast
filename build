@@ -4,6 +4,8 @@
 # Install AND/OR upgrade the dependencies
 echo "Loading dependencies..."
 brew install yt-dlp ffmpeg gsed jq > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
+# The brew version may not be the latest, so we'll use pip to upgrade yt-dlp
+pip install --upgrade yt-dlp > /dev/null 2>&1
 mkdir -p data
 mkdir -p data/shorts
 
@@ -15,9 +17,12 @@ playlist="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4
 # Stop when a file already exists, assuming we are caught up.
 yt-dlp --format 140 \
   --output 'data/%(upload_date>%Y-%m-%d)s-%(id)s.%(ext)s' \
-  --download-archive ./data/archive.txt --break-on-existing \
+  --download-archive ./data/archive.txt \
   --ignore-errors --write-info-json \
+  --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" \
+  --cookies ./all_cookies.txt \
   --write-auto-subs --sub-langs en --sub-format vtt \
+  --break-on-existing \
   "$playlist"
 
 echo "Checking for m4a files that have not been trimmed"
@@ -146,7 +151,8 @@ echo '    <itunes:new-feed-url>https://creekside-life.github.io/podcast/podcast.
 for file in $(find ./data -maxdepth 1 -type f -name "*.info.json" | sort -r)
 do
 	JSON=$(cat "$file")
-	title=$(echo "$JSON" | jq -r '.title' | gsed 's/-.*//' | gsed 's/^\s*//' | gsed 's/\s*$//')
+	# gsed 's/\s+-\s+.*//' |
+	title=$(echo "$JSON" | jq -r '.title' | gsed 's/^\s*//' | gsed 's/\s*$//')
 	title_xml=$(echo "$title" | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	thumbnail=$(echo "$JSON" | jq -r '.thumbnail')
