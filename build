@@ -20,7 +20,6 @@ yt-dlp --format 140 \
   --download-archive ./data/archive.txt \
   --ignore-errors --write-info-json \
   --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" \
-  --cookies ./all_cookies.txt \
   --write-auto-subs --sub-langs en --sub-format vtt \
   --break-on-existing \
   "$playlist"
