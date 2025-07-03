@@ -29,7 +29,7 @@ for file in $(find ./data -maxdepth 1 -type f -name "*.m4a" | sort -r)
 do
   duration=$(ffprobe -i "$file" -show_entries format=duration -v quiet -of csv="p=0")
   # If duration is more than 45min throw an error here for debugging.
-  if [ $(echo "$duration > 3300" | bc) -eq 1 ]
+  if [ $(echo "$duration > 3735" | bc) -eq 1 ]
   then
     video_id=$(echo "$file" | gsed 's/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
     echo "The audio file $file is long ($duration seconds). The youtube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
