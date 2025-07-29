@@ -21,7 +21,6 @@ yt-dlp --format 140 \
   --ignore-errors --write-info-json \
   --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" \
   --write-auto-subs --sub-langs en --sub-format vtt \
-  --break-on-existing \
   "$playlist"
 
 echo "Checking for m4a files that have not been trimmed"
