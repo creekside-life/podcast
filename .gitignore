@@ -2,6 +2,7 @@
 /data/**/*.json
 /data/**/*.vtt
 /data/**/*.mp3
+/data/**/*.part
 .env
 .idea
 /data/shorts/**/*

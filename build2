@@ -4,14 +4,38 @@
 # MP3s are uploaded to year-based releases (e.g., 2025) based on filename date
 # To clean out and start over: find ./data/ -type f ! -name '*.au' ! -name '*.mp3' -delete
 #
-# Usage: ./build2 [--ignore-archive]
+# Usage: ./build2 [--ignore-archive|--trimming-done]
 #   --ignore-archive: Force re-download of all videos, ignoring archive.txt
+#   --trimming-done: Delete last week's m4a files and re-download them (use after trimming videos)
 
 # Parse command line arguments
 IGNORE_ARCHIVE=false
+TRIMMING_DONE=false
+
 if [[ "$1" == "--ignore-archive" ]]; then
   IGNORE_ARCHIVE=true
   echo "WARNING: Ignoring archive.txt - will attempt to re-download all videos"
+elif [[ "$1" == "--trimming-done" ]]; then
+  TRIMMING_DONE=true
+  echo "Deleting last week's m4a files and removing from archive..."
+
+  # Find m4a files from the last 7 days
+  find ./data -maxdepth 1 -type f -name "*.m4a" -mtime -7 | while read file
+  do
+    basename=$(basename "$file")
+    video_id=$(echo "$basename" | gsed 's/.*-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
+    echo "  Removing $basename (ID: $video_id)"
+    rm -f "$file"
+    # Also remove associated files
+    rm -f "${file%.m4a}.mp3"
+    rm -f "${file%.m4a}.info.json"
+    rm -f "${file%.m4a}.en.vtt"
+    rm -f "${file%.m4a}.en.txt"
+    rm -f "${file%.m4a}.au"
+    # Remove from archive.txt
+    gsed -i "/$video_id/d" ./data/archive.txt
+  done
+  echo "Done. Now re-downloading..."
 fi
 
 # Install AND/OR upgrade the dependencies
@@ -49,7 +73,15 @@ do
   if [ $(echo "$duration > 3735" | bc) -eq 1 ]
   then
     video_id=$(echo "$file" | gsed 's/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
-    echo "The audio file $file is long ($duration seconds). The youtube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
+    echo ""
+    echo "ERROR: The audio file $file is long ($duration seconds)."
+    echo "The YouTube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
+    echo ""
+    echo "After trimming the video on YouTube, run:"
+    echo "  ./build2 --trimming-done"
+    echo ""
+    echo "This will delete last week's m4a files and re-download the trimmed versions."
+    echo ""
     # Delete the m4a, mp3, info.json, en.vtt, en.txt and .au files for this video.
     rm -f "$file"
     rm -f $(echo "$file" | gsed 's/\.m4a/\.mp3/')
@@ -265,7 +297,23 @@ do
   #	 continue
   # fi
 	length=$(stat -f%z "$mp3_file")
-	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0")
+
+	# Check if file is empty
+	if [ "$length" -eq 0 ]; then
+	  echo "ERROR: $mp3_file is empty (0 bytes). Auphonic download may have failed."
+	  echo "Skipping this episode."
+	  continue
+	fi
+
+	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0" 2>&1)
+
+	# Check if duration is valid
+	if [[ -z "$duration" || ! "$duration" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+	  echo "ERROR: Could not determine duration for $mp3_file (got: '$duration')"
+	  echo "Skipping this episode."
+	  continue
+	fi
+
 	# If duration is more than 45min throw an error here for debugging.
 	if [ $(echo "$duration > 3300" | bc) -eq 1 ]
 	then
