@@ -1,7 +1,9 @@
 /data/**/*.m4a
 /data/**/*.json
 /data/**/*.vtt
+/data/**/*.mp3
 .env
 .idea
 /data/shorts/**/*
 all_cookies.txt
+.claude
