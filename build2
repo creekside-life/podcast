@@ -296,6 +296,14 @@ do
   #	 exit 1;
   #	 continue
   # fi
+
+	# Check if MP3 file exists
+	if [ ! -f "$mp3_file" ]; then
+	  echo "ERROR: $mp3_file does not exist. Auphonic processing may have failed."
+	  echo "Skipping this episode."
+	  continue
+	fi
+
 	length=$(stat -f%z "$mp3_file")
 
 	# Check if file is empty

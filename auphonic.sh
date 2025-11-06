@@ -38,7 +38,7 @@ else
   # Keep running while UUID is empty
   while [ -z "$UUID" ]; do
     JSON=$(curl -s -X POST https://auphonic.com/api/simple/productions.json \
-      -u "$AUPHONIC_USERNAME:$AUPHONIC_PASSWORD" \
+      -H "Authorization: Bearer $AUPHONIC_API_KEY" \
       -F "preset=oFbHxxvDT2Wrg9CjV5xgBQ" \
       -F "title=$TITLE" \
       -F "input_file=@$FILE" \
@@ -59,7 +59,7 @@ echo "$UUID" > "$AU_FILE"
 while true; do
   echo -n "."
   JSON=$(curl -s -X GET "https://auphonic.com/api/production/$UUID.json" \
-    -u "$AUPHONIC_USERNAME:$AUPHONIC_PASSWORD")
+    -H "Authorization: Bearer $AUPHONIC_API_KEY")
   # echo "$JSON"
   STATUS=$(echo "$JSON" | jq -r '.data.status_string')
   if [ "$STATUS" == "Done" ]; then
@@ -69,5 +69,20 @@ while true; do
 done
 
 DOWNLOAD_URL=$(echo "$JSON" | jq -r '.data.output_files[0].download_url')
+
+# Check if download URL is valid
+if [[ -z "$DOWNLOAD_URL" || "$DOWNLOAD_URL" == "null" ]]; then
+  echo "ERROR: Could not get download URL from Auphonic"
+  echo "Response: $JSON"
+  exit 1
+fi
+
 echo "Auphonic complete, downloading to $NEW_FILE"
-curl -o "$NEW_FILE" "$DOWNLOAD_URL" -u "$AUPHONIC_USERNAME:$AUPHONIC_PASSWORD" > /dev/null 2>&1
+curl -s -S -L -o "$NEW_FILE" "$DOWNLOAD_URL" -H "Authorization: Bearer $AUPHONIC_API_KEY"
+
+# Verify download succeeded and file is not empty
+if [ ! -f "$NEW_FILE" ] || [ ! -s "$NEW_FILE" ]; then
+  echo "ERROR: Download failed or file is empty"
+  rm -f "$NEW_FILE"
+  exit 1
+fi
