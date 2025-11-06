@@ -167,43 +167,38 @@ do
 done
 
 # Check for MP3s that need to be uploaded to yearly releases
-# Group by year based on filename (e.g., 2025-09-29-xxx.mp3 -> 2025)
-declare -A YEAR_MP3S
-
-for file in $(find ./data -maxdepth 1 -type f -name "*.mp3" | sort -r)
+# Process each year individually to avoid needing associative arrays
+for year in $(find ./data -maxdepth 1 -type f -name "*.mp3" | grep -o "[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" | cut -d'-' -f1 | sort -u)
 do
-  basename=$(basename "$file")
-  # Extract year from filename (YYYY-MM-DD-xxx.mp3)
-  year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
+  # Find MP3s for this year that aren't in the release yet
+  NEW_MP3S=""
+  for file in $(find ./data -maxdepth 1 -type f -name "${year}-*.mp3" | sort -r)
+  do
+    basename=$(basename "$file")
+    # Check if this MP3 is already in its year's release
+    if ! gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
+      NEW_MP3S="$NEW_MP3S $file"
+    fi
+  done
 
-  if [ -z "$year" ]; then
-    echo "Warning: Could not extract year from $basename, skipping"
-    continue
+  # Upload new MP3s for this year if any found
+  if [ -n "$NEW_MP3S" ]; then
+    mp3_count=$(echo "$NEW_MP3S" | wc -w | tr -d ' ')
+    echo "Found $mp3_count new MP3(s) for $year"
+
+    # Create release if it doesn't exist
+    if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
+      echo "Creating release $year..."
+      gh release create "$year" \
+        --title "Podcast Episodes $year" \
+        --notes "Podcast episodes from $year" \
+        --repo creekside-life/podcast
+    fi
+
+    # Upload new MP3s for this year
+    echo "Uploading MP3s to release $year..."
+    gh release upload "$year" $NEW_MP3S --repo creekside-life/podcast --clobber
   fi
-
-  # Check if this MP3 is already in its year's release
-  if ! gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-    YEAR_MP3S[$year]+="$file "
-  fi
-done
-
-# Upload new MP3s to their respective year releases
-for year in "${!YEAR_MP3S[@]}"; do
-  mp3_list=(${YEAR_MP3S[$year]})
-  echo "Found ${#mp3_list[@]} new MP3(s) for $year"
-
-  # Create release if it doesn't exist
-  if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
-    echo "Creating release $year..."
-    gh release create "$year" \
-      --title "Podcast Episodes $year" \
-      --notes "Podcast episodes from $year" \
-      --repo creekside-life/podcast
-  fi
-
-  # Upload new MP3s for this year
-  echo "Uploading MP3s to release $year..."
-  gh release upload "$year" ${YEAR_MP3S[$year]} --repo creekside-life/podcast --clobber
 done
 
 # Function to get release URL for an MP3 file
@@ -322,11 +317,12 @@ do
 	  continue
 	fi
 
-	# If duration is more than 45min throw an error here for debugging.
+	# If duration is more than 55min skip it (something went wrong)
 	if [ $(echo "$duration > 3300" | bc) -eq 1 ]
 	then
-	  echo "The audio file $mp3_file is long ($duration seconds). The youtube video at url: https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id') may be too long."
-    exit 1;
+	  echo "WARNING: $mp3_file is long ($duration seconds). Skipping this episode."
+	  echo "YouTube URL: https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id')"
+    continue
   fi
 	# Remove the following lines from the description:
 	# 813-685-0750
