@@ -1,9 +1,46 @@
 #!/bin/bash
 # Generates/updates a podcast and deploys it with github.io pages
+# Uses GitHub Releases (yearly) for MP3 hosting instead of committing to git
+# MP3s are uploaded to year-based releases (e.g., 2025) based on filename date
 # To clean out and start over: find ./data/ -type f ! -name '*.au' ! -name '*.mp3' -delete
+#
+# Usage: ./build2 [--ignore-archive|--trimming-done]
+#   --ignore-archive: Force re-download of all videos, ignoring archive.txt
+#   --trimming-done: Delete last week's m4a files and re-download them (use after trimming videos)
+
+# Parse command line arguments
+IGNORE_ARCHIVE=false
+TRIMMING_DONE=false
+
+if [[ "$1" == "--ignore-archive" ]]; then
+  IGNORE_ARCHIVE=true
+  echo "WARNING: Ignoring archive.txt - will attempt to re-download all videos"
+elif [[ "$1" == "--trimming-done" ]]; then
+  TRIMMING_DONE=true
+  echo "Deleting last week's m4a files and removing from archive..."
+
+  # Find m4a files from the last 7 days
+  find ./data -maxdepth 1 -type f -name "*.m4a" -mtime -7 | while read file
+  do
+    basename=$(basename "$file")
+    video_id=$(echo "$basename" | gsed 's/.*-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
+    echo "  Removing $basename (ID: $video_id)"
+    rm -f "$file"
+    # Also remove associated files
+    rm -f "${file%.m4a}.mp3"
+    rm -f "${file%.m4a}.info.json"
+    rm -f "${file%.m4a}.en.vtt"
+    rm -f "${file%.m4a}.en.txt"
+    rm -f "${file%.m4a}.au"
+    # Remove from archive.txt
+    gsed -i "/$video_id/d" ./data/archive.txt
+  done
+  echo "Done. Now re-downloading..."
+fi
+
 # Install AND/OR upgrade the dependencies
 echo "Loading dependencies..."
-brew install yt-dlp ffmpeg gsed jq > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg > /dev/null 2>&1
+brew install yt-dlp ffmpeg gsed jq gh > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg gh > /dev/null 2>&1
 # The brew version may not be the latest, so we'll use pip to upgrade yt-dlp
 pip install --upgrade yt-dlp > /dev/null 2>&1
 mkdir -p data
@@ -13,15 +50,20 @@ mkdir -p data/shorts
 # read -p "Enter the YouTube playlist URL: " playlist
 playlist="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
 
-# Download the audio, subtitles and metadata, keep an archive to track downloaded files.
-# Stop when a file already exists, assuming we are caught up.
-yt-dlp --format 140 \
+# Build yt-dlp command with optional archive parameter
+YTDLP_CMD="yt-dlp --format 140 \
   --output 'data/%(upload_date>%Y-%m-%d)s-%(id)s.%(ext)s' \
-  --download-archive ./data/archive.txt \
   --ignore-errors --write-info-json \
-  --user-agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36" \
-  --write-auto-subs --sub-langs en --sub-format vtt \
-  "$playlist"
+  --user-agent \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36\" \
+  --write-auto-subs --sub-langs en --sub-format vtt"
+
+# Add download-archive unless --ignore-archive flag is set
+if [[ "$IGNORE_ARCHIVE" == false ]]; then
+  YTDLP_CMD="$YTDLP_CMD --download-archive ./data/archive.txt"
+fi
+
+# Download the audio, subtitles and metadata
+eval "$YTDLP_CMD \"$playlist\""
 
 echo "Checking for m4a files that have not been trimmed"
 for file in $(find ./data -maxdepth 1 -type f -name "*.m4a" | sort -r)
@@ -31,7 +73,15 @@ do
   if [ $(echo "$duration > 3735" | bc) -eq 1 ]
   then
     video_id=$(echo "$file" | gsed 's/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
-    echo "The audio file $file is long ($duration seconds). The youtube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
+    echo ""
+    echo "ERROR: The audio file $file is long ($duration seconds)."
+    echo "The YouTube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
+    echo ""
+    echo "After trimming the video on YouTube, run:"
+    echo "  ./build2 --trimming-done"
+    echo ""
+    echo "This will delete last week's m4a files and re-download the trimmed versions."
+    echo ""
     # Delete the m4a, mp3, info.json, en.vtt, en.txt and .au files for this video.
     rm -f "$file"
     rm -f $(echo "$file" | gsed 's/\.m4a/\.mp3/')
@@ -116,6 +166,69 @@ do
   echo "$text" > "$newfile"
 done
 
+# Check for MP3s that need to be uploaded to yearly releases
+# Process each year individually to avoid needing associative arrays
+for year in $(find ./data -maxdepth 1 -type f -name "*.mp3" | grep -o "[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" | cut -d'-' -f1 | sort -u)
+do
+  # Find MP3s for this year that aren't in the release yet
+  NEW_MP3S=""
+  for file in $(find ./data -maxdepth 1 -type f -name "${year}-*.mp3" | sort -r)
+  do
+    basename=$(basename "$file")
+    # Check if this MP3 is already in its year's release
+    if ! gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
+      NEW_MP3S="$NEW_MP3S $file"
+    fi
+  done
+
+  # Upload new MP3s for this year if any found
+  if [ -n "$NEW_MP3S" ]; then
+    mp3_count=$(echo "$NEW_MP3S" | wc -w | tr -d ' ')
+    echo "Found $mp3_count new MP3(s) for $year"
+
+    # Create release if it doesn't exist
+    if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
+      echo "Creating release $year..."
+      gh release create "$year" \
+        --title "Podcast Episodes $year" \
+        --notes "Podcast episodes from $year" \
+        --repo creekside-life/podcast
+    fi
+
+    # Upload new MP3s for this year
+    echo "Uploading MP3s to release $year..."
+    gh release upload "$year" $NEW_MP3S --repo creekside-life/podcast --clobber
+  fi
+done
+
+# Function to get release URL for an MP3 file
+function get_mp3_url() {
+  local mp3_file="$1"
+  local basename=$(basename "$mp3_file")
+
+  # Extract year from filename (YYYY-MM-DD-xxx.mp3)
+  local year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
+
+  if [ -n "$year" ]; then
+    # Check if file exists in its year's release
+    if gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
+      echo "https://github.com/creekside-life/podcast/releases/download/$year/$basename"
+      return
+    fi
+  fi
+
+  # Fallback: check all year releases (in case year extraction failed or file was uploaded to wrong year)
+  for check_year in {2030..2023}; do
+    if gh release view "$check_year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
+      echo "https://github.com/creekside-life/podcast/releases/download/$check_year/$basename"
+      return
+    fi
+  done
+
+  # Final fallback to GitHub Pages (shouldn't happen after migration)
+  echo "https://creekside-life.github.io/podcast/$mp3_file"
+}
+
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
 echo "Generating RSS feed and README.md..."
 
@@ -178,13 +291,38 @@ do
   #	 exit 1;
   #	 continue
   # fi
+
+	# Check if MP3 file exists
+	if [ ! -f "$mp3_file" ]; then
+	  echo "ERROR: $mp3_file does not exist. Auphonic processing may have failed."
+	  echo "Skipping this episode."
+	  continue
+	fi
+
 	length=$(stat -f%z "$mp3_file")
-	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0")
-	# If duration is more than 45min throw an error here for debugging.
+
+	# Check if file is empty
+	if [ "$length" -eq 0 ]; then
+	  echo "ERROR: $mp3_file is empty (0 bytes). Auphonic download may have failed."
+	  echo "Skipping this episode."
+	  continue
+	fi
+
+	duration=$(ffprobe -i "$mp3_file" -show_entries format=duration -v quiet -of csv="p=0" 2>&1)
+
+	# Check if duration is valid
+	if [[ -z "$duration" || ! "$duration" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+	  echo "ERROR: Could not determine duration for $mp3_file (got: '$duration')"
+	  echo "Skipping this episode."
+	  continue
+	fi
+
+	# If duration is more than 55min skip it (something went wrong)
 	if [ $(echo "$duration > 3300" | bc) -eq 1 ]
 	then
-	  echo "The audio file $mp3_file is long ($duration seconds). The youtube video at url: https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id') may be too long."
-    exit 1;
+	  echo "WARNING: $mp3_file is long ($duration seconds). Skipping this episode."
+	  echo "YouTube URL: https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id')"
+    continue
   fi
 	# Remove the following lines from the description:
 	# 813-685-0750
@@ -196,13 +334,17 @@ do
 	# 3949 Lithia Pinecrest Rd, Valrico, FL 33596
 	description=$(echo "$description" | gsed '/Originally aired:/d' | gsed '/813-685-0750/d' | gsed '/2908 Bell Shoals Rd/d' | gsed '/Brandon, FL 33511/d' | gsed '/http:\/\/creekside.life/d' | gsed '/https:\/\/creekside.life/d' | gsed '/Creekside Church of Christ/d' | gsed '/3949 Lithia Pinecrest Rd, Valrico, FL 33596/d' | gsed '/^\s*$/d')
   au_id_file=$(echo "$file" | gsed 's/\.info\.json/\.au/')
-  video_url="https://www.youtube.com/watch?v$(echo "$JSON" | jq -r '.id')"
+  video_url="https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id')"
   au_id=$(cat "$au_id_file")
+
+  # Get the MP3 URL from GitHub Releases
+  mp3_url=$(get_mp3_url "$mp3_file")
+
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
 	echo "      <description>$description</description>" >> podcast.xml
 	echo "      <pubDate>$date</pubDate>" >> podcast.xml
-	echo "      <enclosure url=\"https://creekside-life.github.io/podcast/$mp3_file\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
+	echo "      <enclosure url=\"$mp3_url\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
 	echo "      <guid>$au_id</guid>" >> podcast.xml
 	echo "      <itunes:image href=\"$thumbnail\" />" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
@@ -211,7 +353,7 @@ do
   echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
   echo "      <link>$video_url</link>" >> podcast.xml
 	echo "    </item>" >> podcast.xml
-	echo "<li><a href=\"https://creekside-life.github.io/podcast/$mp3_file\">$title</a> $md_date <a href=\"$transcript\">txt</a> <a href=\"$video_url\">vid</a></li>" >> index.html
+	echo "<li><a href=\"$mp3_url\">$title</a> $md_date <a href=\"$transcript\">txt</a> <a href=\"$video_url\">vid</a></li>" >> index.html
 done
 echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
@@ -221,26 +363,9 @@ echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
 
 # Deploy the podcast to the website
 
-# For a large initial push:
-# with git remove all history, so that this is the first commit, use the main branch.
-#rm -rf .git
-#git init
-#git config --global init.defaultBranch main
-#git branch -M main
-#git remote add origin https://github.com/creekside-life/podcast.git
-#git add build podcast.xml auphonic.sh speed_up.sh
-#git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
-#git push origin main --force
-# Push one mp3 at a time to avoid disconnects.
-#for file in $(find data -maxdepth 1 -type f -name "*.mp3" | sort -r)
-#do
-#	git add "$file"
-#	git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
-#	git push origin main
-#done
-
-# For subsequent pushes:
+# Add only metadata files, NOT mp3s (they're in releases now)
 git config http.postBuffer 524288000
-git add .
+git add podcast.xml index.html build2 .gitignore
+git add data/*.txt data/*.au 2>/dev/null || true
 git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 git push origin main
