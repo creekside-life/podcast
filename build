@@ -365,7 +365,7 @@ echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
 
 # Add only metadata files, NOT mp3s (they're in releases now)
 git config http.postBuffer 524288000
-git add podcast.xml index.html build2 .gitignore
+git add podcast.xml index.html build .gitignore
 git add data/*.txt data/*.au 2>/dev/null || true
 git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 git push origin main
