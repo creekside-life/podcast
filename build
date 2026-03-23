@@ -55,7 +55,9 @@ YTDLP_CMD="yt-dlp --format 140 \
   --output 'data/%(upload_date>%Y-%m-%d)s-%(id)s.%(ext)s' \
   --ignore-errors --write-info-json \
   --user-agent \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36\" \
-  --write-auto-subs --sub-langs en --sub-format vtt"
+  --write-auto-subs --sub-langs en --sub-format vtt \
+  --match-filter \"duration<=3600\" \
+  --reject-title '(?i)(wednesday|thursday|sunday morning service|sunday singing service|sunday evening service|searching for truth|hermeneutics|faith & psychology|evangelism workshop|youth led|conflict resolution|biblical sexuality|how we got the bible|the four gospels|a study of|comparing spiritual|bring the word|finding heaven on earth|christian attitudes)'"
 
 # Add download-archive unless --ignore-archive flag is set
 if [[ "$IGNORE_ARCHIVE" == false ]]; then

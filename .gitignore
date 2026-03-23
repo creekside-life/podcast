@@ -8,3 +8,5 @@
 /data/shorts/**/*
 all_cookies.txt
 .claude
+client_secret*.json
+token.json
