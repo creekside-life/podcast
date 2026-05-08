@@ -203,6 +203,38 @@ do
   fi
 done
 
+# Ensure the release asset matches the local mp3 byte-for-byte size.
+# The early bulk upload step only catches mp3s that don't yet exist in the release;
+# it doesn't catch mp3s whose bytes changed after that step ran (e.g. Auphonic
+# regenerated different output during the RSS-gen loop). When that happens, the
+# feed's length= attribute won't match what the release actually serves, and
+# podcast players choke on the size mismatch. This function is idempotent:
+# it only re-uploads when sizes differ.
+function ensure_mp3_in_release() {
+  local mp3_file="$1"
+  local local_size="$2"
+  local basename=$(basename "$mp3_file")
+  local year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
+
+  [ -z "$year" ] && return
+
+  if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
+    echo "Creating release $year for $basename..."
+    gh release create "$year" \
+      --title "Podcast Episodes $year" \
+      --notes "Podcast episodes from $year" \
+      --repo creekside-life/podcast > /dev/null
+  fi
+
+  local release_size=$(gh api "repos/creekside-life/podcast/releases/tags/$year" \
+    --jq ".assets[] | select(.name==\"$basename\") | .size" 2>/dev/null)
+
+  if [ "$release_size" != "$local_size" ]; then
+    echo "Syncing $basename to release $year (release: ${release_size:-missing}, local: $local_size)"
+    gh release upload "$year" "$mp3_file" --clobber --repo creekside-life/podcast > /dev/null
+  fi
+}
+
 # Function to get release URL for an MP3 file
 function get_mp3_url() {
   local mp3_file="$1"
@@ -338,6 +370,9 @@ do
   au_id_file=$(echo "$file" | gsed 's/\.info\.json/\.au/')
   video_url="https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id')"
   au_id=$(cat "$au_id_file")
+
+  # Make sure the release serves the same bytes we're about to advertise
+  ensure_mp3_in_release "$mp3_file" "$length"
 
   # Get the MP3 URL from GitHub Releases
   mp3_url=$(get_mp3_url "$mp3_file")
