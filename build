@@ -231,7 +231,28 @@ function ensure_mp3_in_release() {
 
   if [ "$release_size" != "$local_size" ]; then
     echo "Syncing $basename to release $year (release: ${release_size:-missing}, local: $local_size)"
-    gh release upload "$year" "$mp3_file" --clobber --repo creekside-life/podcast > /dev/null
+    local attempt=1
+    local max_attempts=3
+    while [ "$attempt" -le "$max_attempts" ]; do
+      if gh release upload "$year" "$mp3_file" --clobber --repo creekside-life/podcast 2>&1; then
+        # Re-verify the release reflects what we just uploaded — GH's API can
+        # take a moment after upload returns. If we don't verify, get_mp3_url
+        # may emit the broken github.io fallback URL into the feed.
+        sleep 2
+        local new_size=$(gh api "repos/creekside-life/podcast/releases/tags/$year" \
+          --jq ".assets[] | select(.name==\"$basename\") | .size" 2>/dev/null)
+        if [ "$new_size" = "$local_size" ]; then
+          return 0
+        fi
+        echo "  upload attempt $attempt: release shows ${new_size:-nothing}, expected $local_size"
+      else
+        echo "  upload attempt $attempt failed for $basename"
+      fi
+      attempt=$((attempt + 1))
+      [ "$attempt" -le "$max_attempts" ] && sleep $((attempt * 5))
+    done
+    echo "ERROR: failed to upload $basename to release $year after $max_attempts attempts" >&2
+    return 1
   fi
 }
 
