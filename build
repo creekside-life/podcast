@@ -40,9 +40,14 @@ fi
 
 # Install AND/OR upgrade the dependencies
 echo "Loading dependencies..."
-brew install yt-dlp ffmpeg gsed jq gh > /dev/null 2>&1 || brew upgrade yt-dlp ffmpeg gh > /dev/null 2>&1
-# The brew version may not be the latest, so we'll use pip to upgrade yt-dlp
-pip install --upgrade yt-dlp > /dev/null 2>&1
+brew install yt-dlp ffmpeg gsed jq gh > /dev/null 2>&1
+# brew install returns success when a formula is already present, so gating the
+# upgrade behind it (install || upgrade) would skip it every run. Upgrade separately.
+brew upgrade yt-dlp ffmpeg gsed jq gh > /dev/null 2>&1
+# yt-dlp breaks whenever YouTube changes its site, so force it to the newest release.
+# Use its self-updater if it wasn't installed via brew (e.g. pip/standalone binary).
+brew list yt-dlp > /dev/null 2>&1 || yt-dlp -U > /dev/null 2>&1
+echo "  Using yt-dlp $(yt-dlp --version)"
 mkdir -p data
 mkdir -p data/shorts
 
