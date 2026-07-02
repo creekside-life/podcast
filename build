@@ -1,8 +1,19 @@
 #!/bin/bash
 # Generates/updates a podcast and deploys it with github.io pages
-# Uses GitHub Releases (yearly) for MP3 hosting instead of committing to git
+#
+# Audio hosting: MP3s are served from Cloudflare R2 via podcast.creekside.life
+# (a Worker in ./worker), which delivers a real audio/mpeg content-type. GitHub
+# yearly Releases are ALSO kept as a byte-for-byte backup — the Worker falls back
+# to them, and each RSS item lists both as <podcast:alternateEnclosure> sources.
+# (GitHub Releases alone served application/octet-stream, which strict players
+# like Audible refuse to decode — error IP-4555.)
 # MP3s are uploaded to year-based releases (e.g., 2025) based on filename date
 # To clean out and start over: find ./data/ -type f ! -name '*.au' ! -name '*.mp3' -delete
+
+# --- Audio hosting config ---
+R2_BUCKET="creekside-podcast"                 # Cloudflare R2 bucket for audio
+MEDIA_BASE="https://podcast.creekside.life"   # Worker-served public base (R2 + GH fallback)
+GH_RELEASE_BASE="https://github.com/creekside-life/podcast/releases/download"
 #
 # Usage: ./build2 [--ignore-archive|--trimming-done]
 #   --ignore-archive: Force re-download of all videos, ignoring archive.txt
@@ -48,6 +59,13 @@ brew upgrade yt-dlp ffmpeg gsed jq gh > /dev/null 2>&1
 # Use its self-updater if it wasn't installed via brew (e.g. pip/standalone binary).
 brew list yt-dlp > /dev/null 2>&1 || yt-dlp -U > /dev/null 2>&1
 echo "  Using yt-dlp $(yt-dlp --version)"
+
+# wrangler (Cloudflare CLI) uploads audio to R2. It's installed via npm, not brew.
+if ! command -v wrangler > /dev/null 2>&1; then
+  echo "ERROR: wrangler not found. Install it with: npm install -g wrangler" >&2
+  echo "       and authenticate once with: wrangler login" >&2
+  exit 1
+fi
 mkdir -p data
 mkdir -p data/shorts
 
@@ -202,9 +220,18 @@ do
         --repo creekside-life/podcast
     fi
 
-    # Upload new MP3s for this year
+    # Upload new MP3s for this year to GitHub Releases (backup host)
     echo "Uploading MP3s to release $year..."
     gh release upload "$year" $NEW_MP3S --repo creekside-life/podcast --clobber
+
+    # Upload the same MP3s to Cloudflare R2 (primary host) with a real audio type.
+    echo "Uploading MP3s to R2 ($R2_BUCKET)..."
+    for f in $NEW_MP3S; do
+      bn=$(basename "$f")
+      wrangler r2 object put "$R2_BUCKET/$bn" --file "$f" \
+        --content-type "audio/mpeg" --remote > /dev/null 2>&1 \
+        && echo "  R2: $bn" || echo "  R2 upload FAILED: $bn" >&2
+    done
   fi
 done
 
@@ -261,32 +288,63 @@ function ensure_mp3_in_release() {
   fi
 }
 
-# Function to get release URL for an MP3 file
-function get_mp3_url() {
+# Ensure R2 serves this exact mp3. The Worker reports which origin answered
+# (x-podcast-origin: r2|github) and the full size, so we only re-upload when R2
+# is missing the object or serving stale bytes. Idempotent, like its GH sibling.
+function ensure_mp3_in_r2() {
   local mp3_file="$1"
+  local local_size="$2"
   local basename=$(basename "$mp3_file")
+  local hdr origin size
 
-  # Extract year from filename (YYYY-MM-DD-xxx.mp3)
+  hdr=$(curl -sI "$MEDIA_BASE/$basename" 2>/dev/null)
+  origin=$(echo "$hdr" | grep -i '^x-podcast-origin:' | tr -d '\r' | awk '{print $2}')
+  size=$(echo "$hdr" | grep -i '^content-length:' | tr -d '\r' | awk '{print $2}')
+
+  if [ "$origin" = "r2" ] && [ "$size" = "$local_size" ]; then
+    return 0
+  fi
+
+  echo "Syncing $basename to R2 (origin: ${origin:-none}, r2 size: ${size:-missing}, local: $local_size)"
+  local attempt=1
+  local max_attempts=3
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if wrangler r2 object put "$R2_BUCKET/$basename" --file "$mp3_file" \
+         --content-type "audio/mpeg" --remote > /dev/null 2>&1; then
+      return 0
+    fi
+    echo "  R2 upload attempt $attempt failed for $basename"
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$max_attempts" ] && sleep $((attempt * 5))
+  done
+  echo "ERROR: failed to upload $basename to R2 after $max_attempts attempts" >&2
+  return 1
+}
+
+# Public URL served to podcast players: R2 (with GitHub fallback) via the Worker.
+function get_mp3_url() {
+  local basename=$(basename "$1")
+  echo "$MEDIA_BASE/$basename"
+}
+
+# Backup URL: the direct GitHub Releases asset, listed as an alternate source.
+# Returns empty if the file isn't in any release (so we can omit the backup).
+function get_github_url() {
+  local basename=$(basename "$1")
   local year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
 
   if [ -n "$year" ]; then
-    # Check if file exists in its year's release
     if gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-      echo "https://github.com/creekside-life/podcast/releases/download/$year/$basename"
+      echo "$GH_RELEASE_BASE/$year/$basename"
       return
     fi
   fi
-
-  # Fallback: check all year releases (in case year extraction failed or file was uploaded to wrong year)
   for check_year in {2030..2023}; do
     if gh release view "$check_year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-      echo "https://github.com/creekside-life/podcast/releases/download/$check_year/$basename"
+      echo "$GH_RELEASE_BASE/$check_year/$basename"
       return
     fi
   done
-
-  # Final fallback to GitHub Pages (shouldn't happen after migration)
-  echo "https://creekside-life.github.io/podcast/$mp3_file"
 }
 
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
@@ -297,7 +355,7 @@ echo '<h1>Creekside Church of Christ podcast</h1>' >> index.html
 echo '<ul>' >> index.html
 
 echo '<?xml version="1.0" encoding="UTF-8"?>' > podcast.xml
-echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" version="2.0">' >> podcast.xml
+echo '<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0" version="2.0">' >> podcast.xml
 echo '  <channel>' >> podcast.xml
 echo '    <title>Creekside</title>' >> podcast.xml
 echo '    <link>https://creekside.life</link>' >> podcast.xml
@@ -397,17 +455,27 @@ do
   video_url="https://www.youtube.com/watch?v=$(echo "$JSON" | jq -r '.id')"
   au_id=$(cat "$au_id_file")
 
-  # Make sure the release serves the same bytes we're about to advertise
+  # Make sure both hosts serve the same bytes we're about to advertise
   ensure_mp3_in_release "$mp3_file" "$length"
+  ensure_mp3_in_r2 "$mp3_file" "$length"
 
-  # Get the MP3 URL from GitHub Releases
+  # Primary URL (R2 via Worker) and backup URL (direct GitHub Releases asset)
   mp3_url=$(get_mp3_url "$mp3_file")
+  gh_url=$(get_github_url "$mp3_file")
 
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
 	echo "      <description>$description</description>" >> podcast.xml
 	echo "      <pubDate>$date</pubDate>" >> podcast.xml
 	echo "      <enclosure url=\"$mp3_url\" length=\"$length\" type=\"audio/mpeg\" />" >> podcast.xml
+	# Podcasting 2.0 redundant sources: R2 primary, GitHub Releases as backup.
+	# Apps that support alternateEnclosure can fail over between them.
+	echo "      <podcast:alternateEnclosure type=\"audio/mpeg\" length=\"$length\" default=\"true\" title=\"Audio\">" >> podcast.xml
+	echo "        <podcast:source uri=\"$mp3_url\" />" >> podcast.xml
+	if [ -n "$gh_url" ]; then
+	  echo "        <podcast:source uri=\"$gh_url\" />" >> podcast.xml
+	fi
+	echo "      </podcast:alternateEnclosure>" >> podcast.xml
 	echo "      <guid>$au_id</guid>" >> podcast.xml
 	echo "      <itunes:image href=\"$thumbnail\" />" >> podcast.xml
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml

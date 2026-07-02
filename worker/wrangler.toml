@@ -1,0 +1,11 @@
+name = "creekside-podcast-media"
+main = "src/index.js"
+compatibility_date = "2026-01-01"
+
+routes = [
+  { pattern = "podcast.creekside.life/*", zone_id = "db25a3cbd2e22e1ed51d8c742bd4fcc6" }
+]
+
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "creekside-podcast"
