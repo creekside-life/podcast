@@ -74,7 +74,14 @@ mkdir -p data/shorts
 playlist="https://www.youtube.com/playlist?list=PLNQNP1byj5Eik62Ksz2dCmeWlaByay4dB"
 
 # Build yt-dlp command with optional archive parameter
-YTDLP_CMD="yt-dlp --format 140 \
+# An audio selector, not a bare format id: once YouTube adds dubbed audio tracks
+# to a video, plain "140" stops existing and becomes 140-0..140-N, one per
+# language, with the English original's suffix differing from video to video.
+# Asking for 140 then fails with "Requested format is not available" and
+# --ignore-errors skips the episode silently. bestaudio[ext=m4a] still resolves
+# to plain 140 on single-track videos, and yt-dlp's default `lang` sort picks the
+# original (default) track on dubbed ones.
+YTDLP_CMD="yt-dlp --format 'bestaudio[ext=m4a]' \
   --output 'data/%(upload_date>%Y-%m-%d)s-%(id)s.%(ext)s' \
   --ignore-errors --write-info-json \
   --user-agent \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36\" \
@@ -142,9 +149,14 @@ function remove-duplicates-by-extension {
       then
         continue
       fi
-      # We want to keep the oldest file, so only look for files newer than the current file.
+      # Keep the NEWEST copy. When a video is trimmed on YouTube and re-fetched
+      # (./build --trimming-done), the fresh download lands under a later date
+      # carrying the trimmed audio; the stale pre-trim copy is the one to drop.
+      # Keeping the oldest did the opposite — it preserved the untrimmed fetch and
+      # left both in the feed sharing one Auphonic GUID, which podcast apps see as
+      # a single episode published twice.
       newfile_date=$(echo "$newfile" | gsed 's/.*\/\([0-9]\{4\}\)-\([0-9]\{2\}\)-\([0-9]\{2\}\)-.*/\1\2\3/')
-      if [ "$newfile_date" -lt "$file_date" ]
+      if [ "$newfile_date" -gt "$file_date" ]
       then
         continue
       fi
@@ -191,64 +203,61 @@ do
   echo "$text" > "$newfile"
 done
 
-# Check for MP3s that need to be uploaded to yearly releases
-# Process each year individually to avoid needing associative arrays
-for year in $(find ./data -maxdepth 1 -type f -name "*.mp3" | grep -o "[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}" | cut -d'-' -f1 | sort -u)
-do
-  # Find MP3s for this year that aren't in the release yet
-  NEW_MP3S=""
-  for file in $(find ./data -maxdepth 1 -type f -name "${year}-*.mp3" | sort -r)
-  do
-    basename=$(basename "$file")
-    # Check if this MP3 is already in its year's release
-    if ! gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-      NEW_MP3S="$NEW_MP3S $file"
-    fi
-  done
+# --- Release asset index -----------------------------------------------------
+# Every asset of every release, fetched in one paginated call and reused for the
+# rest of the run. The old code ran `gh release view` once per mp3, and up to
+# eight more times per episode in get_github_url — hundreds of round-trips per
+# build. Worse, it sent the failures to /dev/null, so a hiccup reading a release
+# was indistinguishable from "this episode was never uploaded" and triggered a
+# pointless 25MB re-upload of something already published.
+RELEASE_INDEX=$(mktemp)
+trap 'rm -f "$RELEASE_INDEX" "$RELEASE_INDEX.tmp"' EXIT
 
-  # Upload new MP3s for this year if any found
-  if [ -n "$NEW_MP3S" ]; then
-    mp3_count=$(echo "$NEW_MP3S" | wc -w | tr -d ' ')
-    echo "Found $mp3_count new MP3(s) for $year"
-
-    # Create release if it doesn't exist
-    if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
-      echo "Creating release $year..."
-      gh release create "$year" \
-        --title "Podcast Episodes $year" \
-        --notes "Podcast episodes from $year" \
-        --repo creekside-life/podcast
-    fi
-
-    # Upload new MP3s for this year to GitHub Releases (backup host)
-    echo "Uploading MP3s to release $year..."
-    gh release upload "$year" $NEW_MP3S --repo creekside-life/podcast --clobber
-
-    # Upload the same MP3s to Cloudflare R2 (primary host) with a real audio type.
-    echo "Uploading MP3s to R2 ($R2_BUCKET)..."
-    for f in $NEW_MP3S; do
-      bn=$(basename "$f")
-      wrangler r2 object put "$R2_BUCKET/$bn" --file "$f" \
-        --content-type "audio/mpeg" --remote > /dev/null 2>&1 \
-        && echo "  R2: $bn" || echo "  R2 upload FAILED: $bn" >&2
-    done
+function load_release_index() {
+  if ! gh api "repos/creekside-life/podcast/releases" --paginate \
+       --jq '.[] | .tag_name as $t | .assets[] | "\(.name) \(.size) \($t)"' \
+       > "$RELEASE_INDEX" 2>/dev/null; then
+    echo "ERROR: could not list the releases of creekside-life/podcast." >&2
+    echo "       Stopping here: without the index every episode looks" >&2
+    echo "       unpublished and the whole back catalogue gets re-uploaded." >&2
+    exit 1
   fi
-done
+  echo "  Indexed $(wc -l < "$RELEASE_INDEX" | tr -d ' ') release assets"
+}
 
-# Ensure the release asset matches the local mp3 byte-for-byte size.
-# The early bulk upload step only catches mp3s that don't yet exist in the release;
-# it doesn't catch mp3s whose bytes changed after that step ran (e.g. Auphonic
-# regenerated different output during the RSS-gen loop). When that happens, the
-# feed's length= attribute won't match what the release actually serves, and
-# podcast players choke on the size mismatch. This function is idempotent:
-# it only re-uploads when sizes differ.
+# Size the release currently serves for an asset; empty when it isn't there.
+function release_asset_size() {
+  awk -v n="$1" '$1==n {print $2; exit}' "$RELEASE_INDEX"
+}
+
+# Tag of the release holding an asset; empty when it isn't there.
+function release_asset_tag() {
+  awk -v n="$1" '$1==n {print $3; exit}' "$RELEASE_INDEX"
+}
+
+# Record an upload so later lookups this run see it without re-fetching.
+function release_index_put() {
+  awk -v n="$1" '$1!=n' "$RELEASE_INDEX" > "$RELEASE_INDEX.tmp"
+  printf '%s %s %s\n' "$1" "$2" "$3" >> "$RELEASE_INDEX.tmp"
+  mv "$RELEASE_INDEX.tmp" "$RELEASE_INDEX"
+}
+
+# Ensure the release asset matches the local mp3 byte-for-byte. When the sizes
+# disagree the feed's length= attribute won't match what the release serves, and
+# podcast players choke on the mismatch. Idempotent: it only uploads when the
+# sizes actually differ, and it re-checks the API afterwards because uploads.
+# github.com intermittently returns HTTP 400 on 20-30MB bodies when the uplink
+# is slow.
 function ensure_mp3_in_release() {
   local mp3_file="$1"
   local local_size="$2"
   local basename=$(basename "$mp3_file")
   local year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
 
-  [ -z "$year" ] && return
+  [ -z "$year" ] && return 0
+
+  local release_size=$(release_asset_size "$basename")
+  [ "$release_size" = "$local_size" ] && return 0
 
   if ! gh release view "$year" --repo creekside-life/podcast > /dev/null 2>&1; then
     echo "Creating release $year for $basename..."
@@ -258,34 +267,30 @@ function ensure_mp3_in_release() {
       --repo creekside-life/podcast > /dev/null
   fi
 
-  local release_size=$(gh api "repos/creekside-life/podcast/releases/tags/$year" \
-    --jq ".assets[] | select(.name==\"$basename\") | .size" 2>/dev/null)
-
-  if [ "$release_size" != "$local_size" ]; then
-    echo "Syncing $basename to release $year (release: ${release_size:-missing}, local: $local_size)"
-    local attempt=1
-    local max_attempts=3
-    while [ "$attempt" -le "$max_attempts" ]; do
-      if gh release upload "$year" "$mp3_file" --clobber --repo creekside-life/podcast 2>&1; then
-        # Re-verify the release reflects what we just uploaded — GH's API can
-        # take a moment after upload returns. If we don't verify, get_mp3_url
-        # may emit the broken github.io fallback URL into the feed.
-        sleep 2
-        local new_size=$(gh api "repos/creekside-life/podcast/releases/tags/$year" \
-          --jq ".assets[] | select(.name==\"$basename\") | .size" 2>/dev/null)
-        if [ "$new_size" = "$local_size" ]; then
-          return 0
-        fi
-        echo "  upload attempt $attempt: release shows ${new_size:-nothing}, expected $local_size"
-      else
-        echo "  upload attempt $attempt failed for $basename"
+  echo "Syncing $basename to release $year (release: ${release_size:-missing}, local: $local_size)"
+  local attempt=1
+  local max_attempts=4
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if gh release upload "$year" "$mp3_file" --clobber --repo creekside-life/podcast 2>&1; then
+      # Re-verify the release reflects what we just uploaded — GH's API can
+      # take a moment after upload returns. If we don't verify, the feed may
+      # advertise a length the release doesn't actually serve.
+      sleep 2
+      local new_size=$(gh api "repos/creekside-life/podcast/releases/tags/$year" \
+        --jq ".assets[] | select(.name==\"$basename\") | .size" 2>/dev/null)
+      if [ "$new_size" = "$local_size" ]; then
+        release_index_put "$basename" "$local_size" "$year"
+        return 0
       fi
-      attempt=$((attempt + 1))
-      [ "$attempt" -le "$max_attempts" ] && sleep $((attempt * 5))
-    done
-    echo "ERROR: failed to upload $basename to release $year after $max_attempts attempts" >&2
-    return 1
-  fi
+      echo "  upload attempt $attempt: release shows ${new_size:-nothing}, expected $local_size"
+    else
+      echo "  upload attempt $attempt failed for $basename"
+    fi
+    attempt=$((attempt + 1))
+    [ "$attempt" -le "$max_attempts" ] && sleep $((attempt * 5))
+  done
+  echo "ERROR: failed to upload $basename to release $year after $max_attempts attempts" >&2
+  return 1
 }
 
 # Ensure R2 serves this exact mp3. The Worker reports which origin answered
@@ -297,7 +302,7 @@ function ensure_mp3_in_r2() {
   local basename=$(basename "$mp3_file")
   local hdr origin size
 
-  hdr=$(curl -sI "$MEDIA_BASE/$basename" 2>/dev/null)
+  hdr=$(curl -sI --max-time 30 "$MEDIA_BASE/$basename" 2>/dev/null)
   origin=$(echo "$hdr" | grep -i '^x-podcast-origin:' | tr -d '\r' | awk '{print $2}')
   size=$(echo "$hdr" | grep -i '^content-length:' | tr -d '\r' | awk '{print $2}')
 
@@ -307,7 +312,7 @@ function ensure_mp3_in_r2() {
 
   echo "Syncing $basename to R2 (origin: ${origin:-none}, r2 size: ${size:-missing}, local: $local_size)"
   local attempt=1
-  local max_attempts=3
+  local max_attempts=4
   while [ "$attempt" -le "$max_attempts" ]; do
     if wrangler r2 object put "$R2_BUCKET/$basename" --file "$mp3_file" \
          --content-type "audio/mpeg" --remote > /dev/null 2>&1; then
@@ -328,24 +333,41 @@ function get_mp3_url() {
 }
 
 # Backup URL: the direct GitHub Releases asset, listed as an alternate source.
-# Returns empty if the file isn't in any release (so we can omit the backup).
+# Empty unless the release serves these exact bytes, so the feed never hands a
+# player a backup source that would fail the length check it just advertised.
 function get_github_url() {
   local basename=$(basename "$1")
-  local year=$(echo "$basename" | grep -o "^[0-9]\{4\}")
+  local local_size="$2"
 
-  if [ -n "$year" ]; then
-    if gh release view "$year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-      echo "$GH_RELEASE_BASE/$year/$basename"
-      return
-    fi
-  fi
-  for check_year in {2030..2023}; do
-    if gh release view "$check_year" --repo creekside-life/podcast 2>/dev/null | grep -q "$basename"; then
-      echo "$GH_RELEASE_BASE/$check_year/$basename"
-      return
-    fi
-  done
+  [ "$(release_asset_size "$basename")" = "$local_size" ] || return 0
+  echo "$GH_RELEASE_BASE/$(release_asset_tag "$basename")/$basename"
 }
+
+# Publish every local mp3 to both hosts before the feed is written. Both helpers
+# compare sizes first, so a settled catalogue costs one API call plus a HEAD per
+# episode and uploads nothing. One file per `gh release upload` call is the point
+# here: gh abandons the rest of its batch after the first failure, which is how a
+# single HTTP 400 on one 2025 episode once left three more unpublished without
+# the build ever exiting non-zero.
+echo "Loading release asset index..."
+load_release_index
+
+echo "Publishing audio to GitHub Releases and R2..."
+upload_failures=0
+for file in $(find ./data -maxdepth 1 -type f -name "*.mp3" | sort -r)
+do
+  size=$(stat -f%z "$file")
+  if [ "$size" -eq 0 ]; then
+    echo "  skipping empty $(basename "$file")"
+    continue
+  fi
+  ensure_mp3_in_release "$file" "$size" || upload_failures=$((upload_failures + 1))
+  ensure_mp3_in_r2 "$file" "$size" || upload_failures=$((upload_failures + 1))
+done
+if [ "$upload_failures" -gt 0 ]; then
+  echo "WARNING: $upload_failures upload(s) failed above; the feed may advertise" >&2
+  echo "         audio one of the hosts can't serve. Re-run ./build to retry." >&2
+fi
 
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
 echo "Generating RSS feed and README.md..."
@@ -461,7 +483,7 @@ do
 
   # Primary URL (R2 via Worker) and backup URL (direct GitHub Releases asset)
   mp3_url=$(get_mp3_url "$mp3_file")
-  gh_url=$(get_github_url "$mp3_file")
+  gh_url=$(get_github_url "$mp3_file" "$length")
 
 	echo "    <item>" >> podcast.xml
 	echo "      <title>$title_xml</title>" >> podcast.xml
