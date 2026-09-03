@@ -503,7 +503,12 @@ do
 	echo "      <itunes:author>Creekside Church of Christ</itunes:author>" >> podcast.xml
 	echo "      <itunes:summary>$description</itunes:summary>" >> podcast.xml
 	echo "      <itunes:duration>$duration</itunes:duration>" >> podcast.xml
-  echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
+  # Only advertise a transcript we actually publish. Some videos have no auto
+  # captions on YouTube (and a rate-limited subtitle fetch leaves none either),
+  # so emitting the tag unconditionally points podcast apps at a 404.
+  if [ -f "$transcript" ]; then
+    echo "      <itunes:transcript src=\"https://creekside-life.github.io/podcast/$transcript\" />" >> podcast.xml
+  fi
   echo "      <link>$video_url</link>" >> podcast.xml
 	echo "    </item>" >> podcast.xml
 	echo "<li><a href=\"$mp3_url\">$title</a> $md_date <a href=\"$transcript\">txt</a> <a href=\"$video_url\">vid</a></li>" >> index.html
