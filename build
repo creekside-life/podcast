@@ -74,6 +74,11 @@ if ! command -v wrangler > /dev/null 2>&1; then
   echo "       and authenticate once with: wrangler login" >&2
   exit 1
 fi
+# Without a login every R2 upload fails, but only after the long mastering stage. Fail before it instead.
+if ! wrangler whoami 2>&1 | grep -q "You are logged in"; then
+  echo "ERROR: wrangler is not logged in, so R2 uploads would fail. Run: wrangler login" >&2
+  exit 1
+fi
 
 # New episodes are mastered locally (mastering/master.sh) unless --auphonic. Its toolchain installs itself
 # into ~/.cache/creekside-podcast on the first run (a few GB of models), then this is a quick check.
@@ -119,7 +124,7 @@ echo "Checking for m4a files that have not been trimmed"
 for file in $(find ./data -maxdepth 1 -type f -name "*.m4a" | sort -r)
 do
   duration=$(ffprobe -i "$file" -show_entries format=duration -v quiet -of csv="p=0")
-  # If duration is more than 45min throw an error here for debugging.
+  # If duration is more than ~62 min throw an error here for debugging.
   if [ $(echo "$duration > 3735" | bc) -eq 1 ]
   then
     video_id=$(echo "$file" | gsed 's/.*\/[0-9]\{4\}-[0-9]\{2\}-[0-9]\{2\}-\([a-zA-Z0-9_-]*\)\.m4a/\1/')
@@ -128,7 +133,7 @@ do
     echo "The YouTube video at url: https://www.youtube.com/watch?v=$video_id may need trimming."
     echo ""
     echo "After trimming the video on YouTube, run:"
-    echo "  ./build2 --trimming-done"
+    echo "  ./build --trimming-done"
     echo ""
     echo "This will delete last week's m4a files and re-download the trimmed versions."
     echo ""
@@ -382,10 +387,6 @@ do
   ensure_mp3_in_release "$file" "$size" || upload_failures=$((upload_failures + 1))
   ensure_mp3_in_r2 "$file" "$size" || upload_failures=$((upload_failures + 1))
 done
-if [ "$upload_failures" -gt 0 ]; then
-  echo "WARNING: $upload_failures upload(s) failed above; the feed may advertise" >&2
-  echo "         audio one of the hosts can't serve. Re-run ./build to retry." >&2
-fi
 
 # Loop through all the /data/*.json files to generate an RSS feed file, including title, description, date, etc.
 echo "Generating RSS feed and README.md..."
@@ -422,8 +423,9 @@ do
 	JSON=$(cat "$file")
 	# gsed 's/\s+-\s+.*//' |
 	title=$(echo "$JSON" | jq -r '.title' | gsed 's/^\s*//' | gsed 's/\s*$//')
-	title_xml=$(echo "$title" | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
-	description=$(echo "$JSON" | jq -r '.description' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/&/\&amp;/g' | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	# & first: escaping it after the quotes turned every &apos; into &amp;apos;, a literal "&apos;" in podcast apps.
+	title_xml=$(echo "$title" | gsed 's/&/\&amp;/g' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
+	description=$(echo "$JSON" | jq -r '.description' | gsed 's/&/\&amp;/g' | gsed 's/"/\&quot;/g' | gsed "s/'/\&apos;/g" | gsed 's/</\&lt;/g' | gsed 's/>/\&gt;/g')
 	thumbnail=$(echo "$JSON" | jq -r '.thumbnail')
 	transcript=$(echo "$file" | gsed 's/\.info\.json/\.en\.txt/')
 	date=$(echo "$JSON" | jq -r '.upload_date')
@@ -500,8 +502,8 @@ do
   au_id=$(cat "$au_id_file")
 
   # Make sure both hosts serve the same bytes we're about to advertise
-  ensure_mp3_in_release "$mp3_file" "$length"
-  ensure_mp3_in_r2 "$mp3_file" "$length"
+  ensure_mp3_in_release "$mp3_file" "$length" || upload_failures=$((upload_failures + 1))
+  ensure_mp3_in_r2 "$mp3_file" "$length" || upload_failures=$((upload_failures + 1))
 
   # Primary URL (R2 via Worker) and backup URL (direct GitHub Releases asset)
   mp3_url=$(get_mp3_url "$mp3_file")
@@ -539,6 +541,12 @@ echo '  </channel>' >> podcast.xml
 echo '</rss>' >> podcast.xml
 
 echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
+
+# Reported last so it isn't buried under hours of mastering output. It counts episodes mastered this run too.
+if [ "$upload_failures" -gt 0 ]; then
+  echo "WARNING: $upload_failures upload(s) failed above; the feed may advertise" >&2
+  echo "         audio one of the hosts can't serve. Re-run ./build to retry." >&2
+fi
 
 
 # Deploy the podcast to the website
