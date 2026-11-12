@@ -29,8 +29,10 @@ if [ ! -f "$FILE" ]; then
     exit 1
 fi
 
+# A .au holding "creekside-<video id>" is a GUID written by the local mastering pipeline (mastering/master.sh),
+# not an Auphonic production: start a fresh production, and keep that GUID so the episode's feed identity holds.
 UUID=""
-if [ -f "$AU_FILE" ]; then
+if [ -f "$AU_FILE" ] && ! grep -q '^creekside-' "$AU_FILE"; then
   UUID=$(cat "$AU_FILE")
   echo -n "Auphonic already received UUID: $UUID"
 else
@@ -54,7 +56,7 @@ else
 fi
 
 AU_FILE=$(echo "$FILE" | sed 's/\.[^.]*$/.au/')
-echo "$UUID" > "$AU_FILE"
+grep -q '^creekside-' "$AU_FILE" 2>/dev/null || echo "$UUID" > "$AU_FILE"
 
 while true; do
   echo -n "."
@@ -64,6 +66,12 @@ while true; do
   STATUS=$(echo "$JSON" | jq -r '.data.status_string')
   if [ "$STATUS" == "Done" ]; then
     break
+  fi
+  # A failed production (e.g. out of credits) never turns Done; stop instead of polling forever.
+  if [ "$STATUS" == "Error" ]; then
+    echo ""
+    echo "ERROR: Auphonic production $UUID failed: $(echo "$JSON" | jq -r '.data.error_message')"
+    exit 1
   fi
   sleep 10
 done

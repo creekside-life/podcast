@@ -15,19 +15,27 @@ R2_BUCKET="creekside-podcast"                 # Cloudflare R2 bucket for audio
 MEDIA_BASE="https://podcast.creekside.life"   # Worker-served public base (R2 + GH fallback)
 GH_RELEASE_BASE="https://github.com/creekside-life/podcast/releases/download"
 #
-# Usage: ./build2 [--ignore-archive|--trimming-done]
+# Usage: ./build [--ignore-archive|--trimming-done] [--auphonic]
 #   --ignore-archive: Force re-download of all videos, ignoring archive.txt
 #   --trimming-done: Delete last week's m4a files and re-download them (use after trimming videos)
+#   --auphonic: Master new episodes with Auphonic (auphonic.sh) instead of the local pipeline (mastering/)
 
 # Parse command line arguments
 IGNORE_ARCHIVE=false
 TRIMMING_DONE=false
+USE_AUPHONIC=false
+for arg in "$@"; do
+  case "$arg" in
+    --ignore-archive) IGNORE_ARCHIVE=true ;;
+    --trimming-done) TRIMMING_DONE=true ;;
+    --auphonic) USE_AUPHONIC=true ;;
+    *) echo "Usage: ./build [--ignore-archive|--trimming-done] [--auphonic]" >&2; exit 1 ;;
+  esac
+done
 
-if [[ "$1" == "--ignore-archive" ]]; then
-  IGNORE_ARCHIVE=true
+if [[ "$IGNORE_ARCHIVE" == true ]]; then
   echo "WARNING: Ignoring archive.txt - will attempt to re-download all videos"
-elif [[ "$1" == "--trimming-done" ]]; then
-  TRIMMING_DONE=true
+elif [[ "$TRIMMING_DONE" == true ]]; then
   echo "Deleting last week's m4a files and removing from archive..."
 
   # Find m4a files from the last 7 days
@@ -65,6 +73,16 @@ if ! command -v wrangler > /dev/null 2>&1; then
   echo "ERROR: wrangler not found. Install it with: npm install -g wrangler" >&2
   echo "       and authenticate once with: wrangler login" >&2
   exit 1
+fi
+
+# New episodes are mastered locally (mastering/master.sh) unless --auphonic. Its toolchain installs itself
+# into ~/.cache/creekside-podcast on the first run (a few GB of models), then this is a quick check.
+if [[ "$USE_AUPHONIC" == false ]]; then
+  echo "  Mastering locally (pass --auphonic to use Auphonic instead)"
+  if ! bash mastering/setup.sh; then
+    echo "ERROR: mastering/setup.sh failed. Fix it, or run ./build --auphonic" >&2
+    exit 1
+  fi
 fi
 mkdir -p data
 mkdir -p data/shorts
@@ -422,7 +440,11 @@ do
 
   m4a_file=$(echo "$file" | gsed 's/\.info\.json$/\.m4a/')
 	mp3_file=$(echo "$file" | gsed 's/\.info\.json$/\.mp3/')
-  bash auphonic.sh "$m4a_file" "$title" "$mp3_file"
+  if [[ "$USE_AUPHONIC" == true ]]; then
+    bash auphonic.sh "$m4a_file" "$title" "$mp3_file"
+  else
+    bash mastering/master.sh "$m4a_file" "$mp3_file" "$title"
+  fi
   # mp3_fast=$(echo "$mp3_file" | sed 's/\.[^.]*$/_sp.mp3/')
   # bash speed_up.sh "$mp3_file" "$mp3_fast"
   # if [ ! -f "$mp3_fast" ]
@@ -434,7 +456,7 @@ do
 
 	# Check if MP3 file exists
 	if [ ! -f "$mp3_file" ]; then
-	  echo "ERROR: $mp3_file does not exist. Auphonic processing may have failed."
+	  echo "ERROR: $mp3_file does not exist. Mastering may have failed."
 	  echo "Skipping this episode."
 	  continue
 	fi
@@ -443,7 +465,7 @@ do
 
 	# Check if file is empty
 	if [ "$length" -eq 0 ]; then
-	  echo "ERROR: $mp3_file is empty (0 bytes). Auphonic download may have failed."
+	  echo "ERROR: $mp3_file is empty (0 bytes). Mastering may have failed."
 	  echo "Skipping this episode."
 	  continue
 	fi
@@ -523,7 +545,7 @@ echo '</ul><br/><a href="podcast.xml">RSS feed</a></body></html>' >> index.html
 
 # Add only metadata files, NOT mp3s (they're in releases now)
 git config http.postBuffer 524288000
-git add podcast.xml index.html build .gitignore
+git add podcast.xml index.html build .gitignore auphonic.sh mastering
 git add data/*.txt data/*.au 2>/dev/null || true
 git commit -m "$(date -u "+%Y-%m-%d %H:%M:%S")"
 git push origin main
