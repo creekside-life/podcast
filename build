@@ -120,6 +120,23 @@ fi
 # Download the audio, subtitles and metadata
 eval "$YTDLP_CMD \"$playlist\""
 
+# yt-dlp can write a video's info.json and captions, then get HTTP 403 on the audio itself. On 2026-11-16 the
+# cause was the signed-in Chrome cookies in the global yt-dlp config: the same request without them worked. So
+# an episode left with metadata but no audio gets one retry without that config, before mastering misses it.
+for json in $(find ./data -maxdepth 1 -type f -name "[0-9][0-9][0-9][0-9]-*.info.json" | sort -r); do
+  base="${json%.info.json}"
+  if [ -f "$base.m4a" ] || [ -f "$base.mp3" ]; then
+    continue
+  fi
+  id=$(jq -r '.id' "$json")
+  echo "Retrying the audio of $id without the yt-dlp config (its cookies can get a 403)..."
+  archive_arg=""
+  [[ "$IGNORE_ARCHIVE" == false ]] && archive_arg="--download-archive ./data/archive.txt"
+  yt-dlp --ignore-config --remote-components ejs:github --format 'bestaudio[ext=m4a]' --no-progress \
+    --output "$base.%(ext)s" $archive_arg "https://www.youtube.com/watch?v=$id" \
+    || echo "WARNING: still no audio for $id; it stays out of the feed until a later build gets it." >&2
+done
+
 echo "Checking for m4a files that have not been trimmed"
 for file in $(find ./data -maxdepth 1 -type f -name "*.m4a" | sort -r)
 do
